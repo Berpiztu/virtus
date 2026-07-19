@@ -227,7 +227,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--mock", action="store_true", help="Default the UI to the mock provider.")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=5000)
+    parser.add_argument("--port", type=int, default=5069)
     args = parser.parse_args()
     app.config["MOCK_DEFAULT"] = args.mock
     print(f"\n  Virtus agentic-misalignment test → http://{args.host}:{args.port}\n")
