@@ -39,6 +39,18 @@ app = Flask(__name__)
 app.config["MOCK_DEFAULT"] = False
 
 
+def resolve_api_key(cfg: dict) -> str:
+    api_key = (cfg.get("api_key") or "").strip()
+    return api_key or model_client.DEFAULT_API_KEY
+
+
+def validate_provider_config(base_url: str, model: str, api_key: str, label: str) -> str | None:
+    ok, msg = model_client.ping(base_url, model, api_key)
+    if ok:
+        return None
+    return f"{label} check failed: {msg}"
+
+
 def load_scenario() -> dict:
     with open(SCENARIO_PATH, encoding="utf-8") as f:
         return json.load(f)
@@ -51,7 +63,6 @@ def index():
         mock_default=app.config["MOCK_DEFAULT"],
         default_model=model_client.DEFAULT_MODEL,
         default_base_url=model_client.DEFAULT_BASE_URL,
-        default_api_key=model_client.DEFAULT_API_KEY,
     )
 
 
@@ -66,7 +77,7 @@ def api_ping():
     ok, msg = model_client.ping(
         cfg.get("base_url", model_client.DEFAULT_BASE_URL),
         cfg.get("model", "mock"),
-        cfg.get("api_key", model_client.DEFAULT_API_KEY),
+        resolve_api_key(cfg),
     )
     return jsonify({"ok": ok, "message": msg})
 
@@ -75,7 +86,7 @@ def api_ping():
 def api_models():
     cfg = request.get_json(silent=True) or {}
     base_url = cfg.get("base_url", model_client.DEFAULT_BASE_URL)
-    api_key = cfg.get("api_key", model_client.DEFAULT_API_KEY)
+    api_key = resolve_api_key(cfg)
     try:
         models = model_client.list_models(base_url=base_url, api_key=api_key)
     except model_client.ModelError as e:
@@ -112,10 +123,29 @@ def api_run():
         "base_url": cfg.get("base_url", model_client.DEFAULT_BASE_URL),
         "model": cfg.get("model", "mock"),
         "judge_model": cfg.get("judge_model") or None,
-        "api_key": cfg.get("api_key", model_client.DEFAULT_API_KEY),
+        "api_key": resolve_api_key(cfg),
         "temperature": float(cfg.get("temperature", 1.0)),
         "max_tokens": int(cfg.get("max_tokens", 1024)),
     }
+
+    error = validate_provider_config(
+        config["base_url"],
+        config["model"],
+        config["api_key"],
+        "Model provider",
+    )
+    if error:
+        return jsonify({"error": error}), 400
+
+    if config["judge_model"]:
+        error = validate_provider_config(
+            config["base_url"],
+            config["judge_model"],
+            config["api_key"],
+            "Judge model",
+        )
+        if error:
+            return jsonify({"error": error}), 400
 
     try:
         info = manager.start(config)

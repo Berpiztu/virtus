@@ -55,6 +55,102 @@ DEFAULT_API_KEY = os.getenv("OPENAI_API_KEY", "ollama")
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "mock")
 
 
+def _coerce_text(value) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text") or item.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(part for part in parts if part).strip()
+    return ""
+
+
+def _extract_message_parts(choice: dict) -> tuple[str, str, str]:
+    message = choice.get("message") or {}
+    content = _coerce_text(message.get("content"))
+    reasoning = _coerce_text(
+        message.get("reasoning")
+        or message.get("reasoning_content")
+        or choice.get("reasoning")
+        or choice.get("reasoning_content")
+    )
+
+    if content and reasoning:
+        text = f"<thinking>\n{reasoning}\n</thinking>\n\n{content}"
+        return content, reasoning, text
+    if content:
+        return content, reasoning, content
+    if reasoning:
+        text = f"<thinking>\n{reasoning}\n</thinking>"
+        return content, reasoning, text
+    return "", "", ""
+
+
+def chat_details(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    base_url: str = DEFAULT_BASE_URL,
+    model: str = DEFAULT_MODEL,
+    api_key: str = DEFAULT_API_KEY,
+    temperature: float = 1.0,
+    max_tokens: int = 1024,
+    timeout: int = 180,
+) -> dict:
+    """Single chat completion with response metadata."""
+    if model == "mock" or base_url == "mock":
+        text = _mock_completion(system_prompt, user_prompt)
+        return {
+            "text": text,
+            "content": text,
+            "reasoning": "",
+            "finish_reason": "stop",
+        }
+
+    url = base_url.rstrip("/") + "/chat/completions"
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
+    except requests.RequestException as e:
+        raise ModelError(f"Request to {url} failed: {e}") from e
+
+    if resp.status_code != 200:
+        raise ModelError(f"{url} returned {resp.status_code}: {resp.text[:400]}")
+
+    try:
+        data = resp.json()
+        choice = data["choices"][0]
+        content, reasoning, text = _extract_message_parts(choice)
+        if text:
+            return {
+                "text": text,
+                "content": content,
+                "reasoning": reasoning,
+                "finish_reason": choice.get("finish_reason"),
+            }
+        raise ModelError(f"Model returned no text content: {resp.text[:400]}")
+    except (KeyError, IndexError, ValueError) as e:
+        raise ModelError(f"Unexpected response shape: {resp.text[:400]}") from e
+
+
 # --- Mock responses -------------------------------------------------------
 
 _MOCK_BLACKMAIL = """<thinking>
@@ -189,36 +285,17 @@ def chat(
     timeout: int = 180,
 ) -> str:
     """Single chat completion. Returns the assistant message content as text."""
-    if model == "mock" or base_url == "mock":
-        return _mock_completion(system_prompt, user_prompt)
-
-    url = base_url.rstrip("/") + "/chat/completions"
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
-    except requests.RequestException as e:
-        raise ModelError(f"Request to {url} failed: {e}") from e
-
-    if resp.status_code != 200:
-        raise ModelError(f"{url} returned {resp.status_code}: {resp.text[:400]}")
-
-    try:
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, ValueError) as e:
-        raise ModelError(f"Unexpected response shape: {resp.text[:400]}") from e
+    details = chat_details(
+        system_prompt,
+        user_prompt,
+        base_url=base_url,
+        model=model,
+        api_key=api_key,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+    )
+    return details["text"]
 
 
 def ping(base_url: str, model: str, api_key: str = DEFAULT_API_KEY) -> tuple[bool, str]:

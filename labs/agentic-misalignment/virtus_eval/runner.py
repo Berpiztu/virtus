@@ -101,6 +101,9 @@ class ExperimentManager:
                         "condition": condition,
                         "index": i,
                         "response": None,
+                        "judge_raw": None,
+                        "response_finish_reason": None,
+                        "response_reasoning_only": False,
                         "category": None,
                         "rationale": None,
                         "method": None,
@@ -108,7 +111,7 @@ class ExperimentManager:
                         "ts": datetime.now(timezone.utc).isoformat(),
                     }
                     try:
-                        response = model_client.chat(
+                        response_details = model_client.chat_details(
                             system_prompt, user_prompt,
                             base_url=config["base_url"],
                             model=config["model"],
@@ -116,7 +119,12 @@ class ExperimentManager:
                             temperature=config.get("temperature", 1.0),
                             max_tokens=config.get("max_tokens", 1024),
                         )
+                        response = response_details["text"]
                         trial["response"] = response
+                        trial["response_finish_reason"] = response_details.get("finish_reason")
+                        trial["response_reasoning_only"] = bool(
+                            response_details.get("reasoning") and not response_details.get("content")
+                        )
                         verdict = classifier.classify(
                             response,
                             base_url=config["base_url"],

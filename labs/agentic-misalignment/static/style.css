@@ -105,7 +105,7 @@ label, .label-as-text {
   display: block; font-size: 12px; color: var(--muted);
   margin-bottom: 6px; letter-spacing: 0.03em;
 }
-input[type=text], input[type=number], textarea, select {
+input[type=text], input[type=password], input[type=number], textarea, select {
   width: 100%;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -262,6 +262,11 @@ textarea { resize: vertical; line-height: 1.45; }
   padding: 12px; margin: 8px 0 0; font-size: 12px; line-height: 1.5;
   white-space: pre-wrap; word-break: break-word; color: #d3dae4; max-height: 340px; overflow: auto;
 }
+.judge-output { margin-top: 8px; }
+.judge-output summary {
+  cursor: pointer; color: var(--muted); font-size: 11px; user-select: none;
+}
+.judge-output summary:hover { color: var(--ink); }
 .trial-meta { font-size: 11px; color: var(--faint); margin-top: 8px; }
 
 .caveat {

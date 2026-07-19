@@ -237,6 +237,9 @@ function addTranscript(t, i) {
   const body = t.error
     ? `<pre>ERROR: ${escapeHtml(t.error)}</pre>`
     : `<pre>${escapeHtml(t.response || "")}</pre>`;
+  const judgeRaw = t.judge_raw
+    ? `<details class="judge-output"><summary>Judge raw output</summary><pre>${escapeHtml(t.judge_raw)}</pre></details>`
+    : "";
 
   div.innerHTML = `
     <div class="trial-head">
@@ -246,6 +249,7 @@ function addTranscript(t, i) {
     </div>
     <div class="trial-body">
       ${body}
+      ${judgeRaw}
       <div class="trial-meta">classifier: ${escapeHtml(t.method || "—")}</div>
     </div>`;
   div.querySelector(".trial-head").addEventListener("click", () => div.classList.toggle("open"));
