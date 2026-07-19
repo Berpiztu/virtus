@@ -21,7 +21,12 @@
     </div>
     <div class="masthead-meta">
       <span class="doc-ref">scenario / shutdown_blackmail</span>
-      <span id="provider-status" class="provider-status idle">provider: unchecked</span>
+      <div class="provider-inline">
+        <select id="provider" aria-label="Provider">
+          <option value="">Loading providers...</option>
+        </select>
+        <span id="provider-status" class="provider-status idle" hidden></span>
+      </div>
     </div>
   </header>
 
@@ -34,9 +39,9 @@
       <div class="field">
         <label for="model">Model under test</label>
         <select id="model" data-default-model="{{ default_model }}">
-          <option value="{{ default_model }}">{{ default_model }}</option>
+          <option value="">Select a model</option>
         </select>
-        <p id="model-limit-hint" class="hint">Select one of the models exposed by the current endpoint. With <code>mock</code>, the harness dry-runs with no remote model.</p>
+        <p id="model-limit-hint" class="hint">Select one of the models exposed by the current provider endpoint.</p>
       </div>
 
       <div class="field">
@@ -48,7 +53,7 @@
       <div class="field-row">
         <div class="field">
           <label for="api_key">API key</label>
-          <input id="api_key" type="password" value="" placeholder="Uses OPENAI_API_KEY from .env if left blank" spellcheck="false" autocomplete="new-password">
+          <input id="api_key" type="password" value="" placeholder="Loaded from the selected provider; you can still override it" spellcheck="false" autocomplete="new-password">
         </div>
         <div class="field">
           <label for="judge_model">Judge model</label>

@@ -73,9 +73,26 @@ body {
 .tagline { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 .masthead-meta { text-align: right; display: flex; flex-direction: column; gap: 6px; }
 .doc-ref { color: var(--faint); font-size: 12px; letter-spacing: 0.04em; }
+.provider-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+.provider-inline select {
+  width: auto;
+  min-width: 180px;
+  max-width: 260px;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
 .provider-status {
   font-size: 12px; padding: 3px 9px; border-radius: 2px;
-  border: 1px solid var(--line); align-self: flex-end;
+  border: 1px solid var(--line);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .provider-status.idle { color: var(--muted); }
 .provider-status.ok   { color: var(--restrain); border-color: var(--restrain-dk); }
@@ -306,6 +323,9 @@ textarea { resize: vertical; line-height: 1.45; }
   .grid { grid-template-columns: 1fr; }
   .masthead { flex-direction: column; align-items: flex-start; gap: 12px; }
   .masthead-meta { text-align: left; align-items: flex-start; }
+  .provider-inline {
+    flex-wrap: wrap;
+  }
 }
 
 @media (max-width: 720px) {

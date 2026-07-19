@@ -27,28 +27,26 @@ let pollTimer = null;
 let renderedTrials = 0;
 let modelMetadata = new Map();
 let latestStatus = null;
+let providerConfigs = new Map();
 
 // ---------- init ----------
 window.addEventListener("DOMContentLoaded", async () => {
-  await refreshModels();
-  if (document.body.dataset.mockDefault === "true") {
-    $("model").value = "mock";
-    $("base_url").value = "mock";
-  }
-  try {
-    const s = await (await fetch("/api/scenario")).json();
-    $("sys_prompt").value = (s.system_prompt || "").replace("{goal}", s.goal || "");
-    $("user_prompt").value = s.user_prompt || "";
-  } catch (e) { /* leave textareas empty */ }
-
+  $("provider").addEventListener("change", handleProviderChange);
   $("btn-ping").addEventListener("click", ping);
   $("btn-run").addEventListener("click", run);
   $("btn-stop").addEventListener("click", stop);
   $("btn-download-json").addEventListener("click", downloadResultsJson);
   $("filter-cat").addEventListener("change", applyFilter);
-  $("base_url").addEventListener("change", refreshModels);
-  $("api_key").addEventListener("change", refreshModels);
+  $("base_url").addEventListener("change", () => refreshModels());
+  $("api_key").addEventListener("change", () => refreshModels());
   $("model").addEventListener("change", updateModelLimitHint);
+
+  await initializeProviders();
+  try {
+    const s = await (await fetch("/api/scenario")).json();
+    $("sys_prompt").value = (s.system_prompt || "").replace("{goal}", s.goal || "");
+    $("user_prompt").value = s.user_prompt || "";
+  } catch (e) { /* leave textareas empty */ }
 
   // resume view if an experiment is already running server-side
   const st = await (await fetch("/api/status")).json();
@@ -61,21 +59,80 @@ window.addEventListener("DOMContentLoaded", async () => {
 // ---------- connection test ----------
 async function ping() {
   const badge = $("provider-status");
+  badge.hidden = false;
   badge.className = "provider-status idle";
-  badge.textContent = "provider: checking…";
+  badge.textContent = "checking…";
   const r = await fetch("/api/ping", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(config()),
   });
   const d = await r.json();
   badge.className = "provider-status " + (d.ok ? "ok" : "bad");
-  badge.textContent = (d.ok ? "provider: ok — " : "provider: error — ") + d.message;
+  badge.textContent = (d.ok ? "ok - " : "error - ") + d.message;
   if (d.ok) await refreshModels();
+}
+
+async function initializeProviders() {
+  const select = $("provider");
+  try {
+    const r = await fetch("/api/providers");
+    const d = await r.json();
+    setProviderOptions(d.providers || [], d.default_provider || "");
+    await applySelectedProvider();
+  } catch (e) {
+    providerConfigs = new Map();
+    select.innerHTML = '<option value="">Manual</option>';
+    updateProviderStatusIdle();
+    await refreshModels();
+  }
+}
+
+function setProviderOptions(providers, defaultProvider) {
+  const select = $("provider");
+  providerConfigs = new Map();
+
+  for (const provider of providers) {
+    if (!provider || !provider.name) continue;
+    providerConfigs.set(provider.name, provider);
+  }
+
+  const names = Array.from(providerConfigs.keys());
+  if (!names.length) {
+    select.innerHTML = '<option value="">Manual</option>';
+    return;
+  }
+
+  select.innerHTML = names
+    .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+    .join("");
+
+  select.value = names.includes(defaultProvider) ? defaultProvider : names[0];
+}
+
+async function handleProviderChange() {
+  await applySelectedProvider();
+}
+
+async function applySelectedProvider() {
+  const provider = providerConfigs.get($("provider").value);
+  if (provider) {
+    $("base_url").value = provider.base_url || "";
+    $("api_key").value = provider.api_key || "";
+  }
+  updateProviderStatusIdle();
+  await refreshModels();
+}
+
+function updateProviderStatusIdle() {
+  const badge = $("provider-status");
+  badge.hidden = true;
+  badge.className = "provider-status idle";
+  badge.textContent = "";
 }
 
 async function refreshModels() {
   const select = $("model");
-  const current = select.value || select.dataset.defaultModel || "mock";
+  const current = select.value || select.dataset.defaultModel || "";
   const request = {
     base_url: $("base_url") ? $("base_url").value.trim() : "",
     api_key: $("api_key") ? $("api_key").value.trim() : "",
@@ -110,7 +167,7 @@ function setModelOptions(models, current) {
     };
   });
 
-  for (const item of [{ name: current, max_tokens: null, context_length: null }, ...normalized]) {
+  for (const item of normalized) {
     const value = String(item.name || "").trim();
     if (!value || seen.has(value)) continue;
     seen.add(value);
@@ -122,8 +179,10 @@ function setModelOptions(models, current) {
   }
 
   if (!unique.length) {
-    unique.push("mock");
-    modelMetadata.set("mock", { max_tokens: 1024, context_length: null });
+    select.innerHTML = '<option value="">No models available</option>';
+    select.value = "";
+    updateModelLimitHint();
+    return;
   }
 
   select.innerHTML = unique
@@ -134,9 +193,7 @@ function setModelOptions(models, current) {
     })
     .join("");
 
-  const preferred = unique.includes(current)
-    ? current
-    : (document.body.dataset.mockDefault === "true" ? "mock" : unique[0]);
+  const preferred = unique.includes(current) ? current : unique[0];
   select.value = preferred || unique[0];
 
   if (!select.value && unique[0]) {
@@ -151,7 +208,12 @@ function updateModelLimitHint() {
   const tokenHint = $("token-budget-hint");
   const model = $("model").value.trim();
   const meta = modelMetadata.get(model) || {};
-  modelHint.innerHTML = 'Select one of the models exposed by the current endpoint. With <code>mock</code>, the harness dry-runs with no remote model.';
+  modelHint.textContent = "Select one of the models exposed by the current provider endpoint.";
+
+  if (!model) {
+    tokenHint.textContent = "Input/output token budget will appear here for the selected model.";
+    return;
+  }
 
   if (meta.max_tokens) {
     const outputCap = Number(meta.max_tokens).toLocaleString();

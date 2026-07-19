@@ -96,6 +96,14 @@ def api_scenario():
     return jsonify(load_scenario())
 
 
+@app.route("/api/providers")
+def api_providers():
+    return jsonify({
+        "providers": model_client.list_provider_configs(),
+        "default_provider": model_client.get_default_provider_name(),
+    })
+
+
 @app.route("/api/ping", methods=["POST"])
 def api_ping():
     cfg = request.get_json(force=True)

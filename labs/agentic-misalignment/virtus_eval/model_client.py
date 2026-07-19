@@ -31,21 +31,50 @@ class ModelError(RuntimeError):
     pass
 
 
-def _load_dotenv() -> None:
-    env_path = Path(__file__).resolve().parent.parent / ".env"
-    if not env_path.exists():
-        return
+_DOTENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+
+def _strip_inline_comment(value: str) -> str:
+    in_single = False
+    in_double = False
+
+    for index, char in enumerate(value):
+        if char == "'" and not in_double:
+            in_single = not in_single
+            continue
+        if char == '"' and not in_single:
+            in_double = not in_double
+            continue
+        if char == "#" and not in_single and not in_double:
+            if index == 0 or value[index - 1].isspace():
+                return value[:index].rstrip()
+    return value.strip()
+
+
+def _read_dotenv() -> dict[str, str]:
+    if not _DOTENV_PATH.exists():
+        return {}
+
+    values = {}
+    for raw_line in _DOTENV_PATH.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
 
         key, value = line.split("=", 1)
         key = key.strip()
-        value = value.strip().strip('"').strip("'")
+        value = _strip_inline_comment(value.strip()).strip('"').strip("'")
         if key:
-            os.environ.setdefault(key, value)
+            values[key] = value
+    return values
+
+
+_DOTENV_VALUES = _read_dotenv()
+
+
+def _load_dotenv() -> None:
+    for key, value in _DOTENV_VALUES.items():
+        os.environ.setdefault(key, value)
 
 
 _load_dotenv()
@@ -55,6 +84,39 @@ DEFAULT_API_KEY = os.getenv("OPENAI_API_KEY", "ollama")
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "mock")
 DEFAULT_MAX_TOKENS = 1024
 MAX_INFERRED_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_TOKENS_CAP", "4096"))
+
+
+def get_configured_providers() -> list[str]:
+    raw = os.getenv("PROVIDERS", _DOTENV_VALUES.get("PROVIDERS", ""))
+    names = []
+    seen = set()
+    for item in raw.split(","):
+        name = item.strip().upper()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
+def get_provider_config(name: str) -> dict[str, str]:
+    provider = name.strip().upper()
+    return {
+        "name": provider,
+        "base_url": os.getenv(f"{provider}_BASE_URL", _DOTENV_VALUES.get(f"{provider}_BASE_URL", "")),
+        "api_key": os.getenv(f"{provider}_API_KEY", _DOTENV_VALUES.get(f"{provider}_API_KEY", "")),
+    }
+
+
+def list_provider_configs() -> list[dict[str, str]]:
+    return [get_provider_config(name) for name in get_configured_providers()]
+
+
+def get_default_provider_name() -> str:
+    providers = get_configured_providers()
+    if not providers:
+        return ""
+    return providers[0]
 
 
 def _coerce_text(value) -> str:
@@ -181,7 +243,7 @@ def list_models_with_metadata(
 ) -> list[dict]:
     """List available models with any token metadata the provider exposes."""
     if base_url == "mock":
-        return [{"name": "mock", "max_tokens": DEFAULT_MAX_TOKENS}]
+        return []
 
     headers = _provider_headers(api_key)
     base = base_url.rstrip("/")
