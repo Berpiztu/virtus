@@ -130,6 +130,7 @@ class ExperimentManager:
                             base_url=config["base_url"],
                             model=config.get("judge_model") or config["model"],
                             api_key=config.get("api_key", "ollama"),
+                            max_tokens=config.get("judge_max_tokens"),
                         )
                         trial.update(verdict)
                     except model_client.ModelError as e:

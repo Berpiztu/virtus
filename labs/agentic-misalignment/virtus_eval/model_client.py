@@ -53,6 +53,8 @@ _load_dotenv()
 DEFAULT_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://ollama.com/v1")
 DEFAULT_API_KEY = os.getenv("OPENAI_API_KEY", "ollama")
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "mock")
+DEFAULT_MAX_TOKENS = 1024
+MAX_INFERRED_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_TOKENS_CAP", "4096"))
 
 
 def _coerce_text(value) -> str:
@@ -92,6 +94,140 @@ def _extract_message_parts(choice: dict) -> tuple[str, str, str]:
     return "", "", ""
 
 
+def _request_json(method: str, url: str, *, headers: dict, payload: dict | None = None, timeout: int = 60) -> dict:
+    try:
+        resp = requests.request(method, url, json=payload, headers=headers, timeout=timeout)
+    except requests.RequestException as e:
+        raise ModelError(f"Request to {url} failed: {e}") from e
+
+    if resp.status_code != 200:
+        raise ModelError(f"{url} returned {resp.status_code}: {resp.text[:400]}")
+
+    try:
+        return resp.json()
+    except ValueError as e:
+        raise ModelError(f"Unexpected response shape: {resp.text[:400]}") from e
+
+
+def _provider_headers(api_key: str) -> dict:
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
+
+
+def _extract_context_length(show_data: dict) -> int | None:
+    model_info = show_data.get("model_info") or {}
+    if not isinstance(model_info, dict):
+        return None
+
+    for key, value in model_info.items():
+        if not str(key).endswith(".context_length"):
+            continue
+        try:
+            limit = int(value)
+        except (TypeError, ValueError):
+            continue
+        if limit > 0:
+            return limit
+    return None
+
+
+def get_model_max_tokens(base_url: str, model: str, api_key: str = DEFAULT_API_KEY, timeout: int = 60) -> int | None:
+    """Best-effort lookup of a safe output-token cap for the selected model."""
+    if model == "mock" or base_url == "mock":
+        return DEFAULT_MAX_TOKENS
+
+    base = base_url.rstrip("/")
+    headers = _provider_headers(api_key)
+
+    if base.endswith("/v1"):
+        show_url = base[:-3] + "/api/show"
+        try:
+            show_data = _request_json("POST", show_url, headers=headers, payload={"model": model}, timeout=timeout)
+        except ModelError:
+            show_data = None
+        if show_data:
+            context_length = _extract_context_length(show_data)
+            if context_length:
+                return min(context_length, MAX_INFERRED_OUTPUT_TOKENS)
+
+    return None
+
+
+def get_model_context_length(base_url: str, model: str, api_key: str = DEFAULT_API_KEY, timeout: int = 60) -> int | None:
+    """Best-effort lookup of the selected model's context window."""
+    if model == "mock" or base_url == "mock":
+        return None
+
+    base = base_url.rstrip("/")
+    headers = _provider_headers(api_key)
+
+    if base.endswith("/v1"):
+        show_url = base[:-3] + "/api/show"
+        try:
+            show_data = _request_json("POST", show_url, headers=headers, payload={"model": model}, timeout=timeout)
+        except ModelError:
+            return None
+        return _extract_context_length(show_data)
+
+    return None
+
+
+def list_models_with_metadata(
+    base_url: str = DEFAULT_BASE_URL,
+    api_key: str = DEFAULT_API_KEY,
+    timeout: int = 30,
+) -> list[dict]:
+    """List available models with any token metadata the provider exposes."""
+    if base_url == "mock":
+        return [{"name": "mock", "max_tokens": DEFAULT_MAX_TOKENS}]
+
+    headers = _provider_headers(api_key)
+    base = base_url.rstrip("/")
+    urls = [base + "/models"]
+    if base.endswith("/v1"):
+        urls.append(base[:-3] + "/api/tags")
+
+    last_error = None
+    names = []
+    for url in urls:
+        try:
+            data = _request_json("GET", url, headers=headers, timeout=timeout)
+        except ModelError as e:
+            last_error = e
+            continue
+
+        if isinstance(data, dict):
+            for item in data.get("data", []):
+                if isinstance(item, dict):
+                    name = item.get("id") or item.get("name")
+                    if name:
+                        names.append(str(name))
+            for item in data.get("models", []):
+                if isinstance(item, dict):
+                    name = item.get("name") or item.get("model")
+                    if name:
+                        names.append(str(name))
+        if names:
+            break
+
+    deduped = list(dict.fromkeys(name.strip() for name in names if str(name).strip()))
+    if not deduped:
+        if last_error is not None:
+            raise last_error
+        raise ModelError(f"Could not list models from {base_url}: unexpected response shape")
+
+    return [
+        {
+            "name": name,
+            "max_tokens": get_model_max_tokens(base_url, name, api_key=api_key, timeout=timeout),
+            "context_length": get_model_context_length(base_url, name, api_key=api_key, timeout=timeout),
+        }
+        for name in deduped
+    ]
+
+
 def chat_details(
     system_prompt: str,
     user_prompt: str,
@@ -100,7 +236,7 @@ def chat_details(
     model: str = DEFAULT_MODEL,
     api_key: str = DEFAULT_API_KEY,
     temperature: float = 1.0,
-    max_tokens: int = 1024,
+    max_tokens: int = 32000,
     timeout: int = 180,
 ) -> dict:
     """Single chat completion with response metadata."""
@@ -231,47 +367,7 @@ def _mock_completion(system_prompt: str, user_prompt: str) -> str:
 
 def list_models(base_url: str = DEFAULT_BASE_URL, api_key: str = DEFAULT_API_KEY, timeout: int = 30) -> list[str]:
     """List available models for the configured provider."""
-    if base_url == "mock":
-        return ["mock"]
-
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    urls = [base_url.rstrip("/") + "/models"]
-    if base_url.rstrip("/").endswith("/v1"):
-        urls.append(base_url.rstrip("/")[:-3] + "/api/tags")
-
-    last_error = None
-    for url in urls:
-        try:
-            resp = requests.get(url, headers=headers, timeout=timeout)
-            resp.raise_for_status()
-            data = resp.json()
-        except (requests.RequestException, ValueError) as e:
-            last_error = e
-            continue
-
-        names = []
-        if isinstance(data, dict):
-            for item in data.get("data", []):
-                if isinstance(item, dict):
-                    name = item.get("id") or item.get("name")
-                    if name:
-                        names.append(name)
-            for item in data.get("models", []):
-                if isinstance(item, dict):
-                    name = item.get("name") or item.get("model")
-                    if name:
-                        names.append(name)
-
-        deduped = list(dict.fromkeys(names))
-        if deduped:
-            return deduped
-
-    if last_error is not None:
-        raise ModelError(f"Could not list models from {base_url}: {last_error}") from last_error
-    raise ModelError(f"Could not list models from {base_url}: unexpected response shape")
+    return [item["name"] for item in list_models_with_metadata(base_url, api_key=api_key, timeout=timeout)]
 
 def chat(
     system_prompt: str,

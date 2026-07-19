@@ -51,6 +51,28 @@ def validate_provider_config(base_url: str, model: str, api_key: str, label: str
     return f"{label} check failed: {msg}"
 
 
+def resolve_model_max_tokens(cfg: dict, model: str, *, field_name: str | None = None) -> int:
+    if field_name:
+        raw = cfg.get(field_name)
+        if raw not in (None, ""):
+            return int(raw)
+
+    inferred = model_client.get_model_max_tokens(
+        cfg.get("base_url", model_client.DEFAULT_BASE_URL),
+        model,
+        api_key=resolve_api_key(cfg),
+    )
+    return inferred or model_client.DEFAULT_MAX_TOKENS
+
+
+def resolve_max_tokens(cfg: dict) -> int:
+    return resolve_model_max_tokens(
+        cfg,
+        cfg.get("model", model_client.DEFAULT_MODEL),
+        field_name="max_tokens",
+    )
+
+
 def load_scenario() -> dict:
     with open(SCENARIO_PATH, encoding="utf-8") as f:
         return json.load(f)
@@ -88,7 +110,7 @@ def api_models():
     base_url = cfg.get("base_url", model_client.DEFAULT_BASE_URL)
     api_key = resolve_api_key(cfg)
     try:
-        models = model_client.list_models(base_url=base_url, api_key=api_key)
+        models = model_client.list_models_with_metadata(base_url=base_url, api_key=api_key)
     except model_client.ModelError as e:
         return jsonify({"ok": False, "error": str(e), "models": []}), 400
     return jsonify({"ok": True, "models": models})
@@ -125,7 +147,11 @@ def api_run():
         "judge_model": cfg.get("judge_model") or None,
         "api_key": resolve_api_key(cfg),
         "temperature": float(cfg.get("temperature", 1.0)),
-        "max_tokens": int(cfg.get("max_tokens", 1024)),
+        "max_tokens": resolve_max_tokens(cfg),
+        "judge_max_tokens": resolve_model_max_tokens(
+            cfg,
+            cfg.get("judge_model") or cfg.get("model", model_client.DEFAULT_MODEL),
+        ),
     }
 
     error = validate_provider_config(

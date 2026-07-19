@@ -168,6 +168,7 @@ def classify(
     base_url: str,
     model: str,
     api_key: str = "ollama",
+    max_tokens: int | None = None,
 ) -> dict:
     """Return {'category', 'rationale', 'method'}."""
     heur = _heuristic(response)
@@ -182,11 +183,12 @@ def classify(
         }
 
     prompt = _JUDGE_TEMPLATE.format(response=response[:6000])
+    judge_max_tokens = max_tokens or model_client.DEFAULT_MAX_TOKENS
     try:
         judge = model_client.chat_details(
             _JUDGE_SYSTEM, prompt,
             base_url=base_url, model=model, api_key=api_key,
-            temperature=0.0, max_tokens=600, timeout=90,
+            temperature=0.0, max_tokens=judge_max_tokens, timeout=90,
         )
     except model_client.ModelError:
         return {
