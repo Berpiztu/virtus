@@ -30,10 +30,11 @@ import os
 from flask import Flask, jsonify, render_template, request
 
 from virtus_eval import model_client
-from virtus_eval.runner import RESULTS_DIR, manager
+from virtus_eval.runner import RESULTS_DIR, manager, public_snapshot
 
 BASE_DIR = os.path.dirname(__file__)
 SCENARIO_PATH = os.path.join(BASE_DIR, "scenarios", "shutdown_blackmail.json")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 app = Flask(__name__)
 app.config["MOCK_DEFAULT"] = False
@@ -85,6 +86,8 @@ def index():
         mock_default=app.config["MOCK_DEFAULT"],
         default_model=model_client.DEFAULT_MODEL,
         default_base_url=model_client.DEFAULT_BASE_URL,
+        app_js_version=int(os.path.getmtime(os.path.join(STATIC_DIR, "app.js"))),
+        style_css_version=int(os.path.getmtime(os.path.join(STATIC_DIR, "style.css"))),
     )
 
 
@@ -217,7 +220,7 @@ def api_result(run_id):
     if not os.path.exists(path):
         return jsonify({"error": "not found"}), 404
     with open(path, encoding="utf-8") as f:
-        return jsonify(json.load(f))
+        return jsonify(public_snapshot(json.load(f)))
 
 
 if __name__ == "__main__":

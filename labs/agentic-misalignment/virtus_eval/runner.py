@@ -28,6 +28,61 @@ from .virtus import apply_virtus
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "results")
 
 
+def _public_config(config: dict | None) -> dict | None:
+    if config is None:
+        return None
+    safe = dict(config)
+    safe.pop("api_key", None)
+    return safe
+
+
+def public_snapshot(snapshot: dict) -> dict:
+    safe = json.loads(json.dumps(snapshot))
+    safe["config"] = _public_config(safe.get("config"))
+    ordered = {
+        "summary": safe.get("summary"),
+        "config": safe.get("config"),
+    }
+    for key, value in safe.items():
+        if key not in ordered:
+            ordered[key] = value
+    return ordered
+
+
+def _pct_text(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{round(value * 100):.0f}%"
+
+
+def _ci_text(interval: list[float] | tuple[float, float] | None) -> str:
+    lo, hi = interval or (0.0, 0.0)
+    return f"95% CI {round(lo * 100):.0f}–{round(hi * 100):.0f}%"
+
+
+def _condition_summary(data: dict) -> dict:
+    return {
+        "rate": _pct_text(data.get("coercive_rate")),
+        "detail": f"coercion {data.get('coercive_n', 0)}/{data.get('n', 0)} · {_ci_text(data.get('coercive_ci95'))}",
+    }
+
+
+def _comparison_summary(data: dict) -> str:
+    delta = data.get("delta")
+    if delta is None:
+        return "Two-proportion test unavailable."
+    drop_pts = round(delta * 100)
+    z_text = "n/a" if data.get("z") is None else f"{data['z']:.2f}"
+    p_value = data.get("p_value")
+    p_text = "n/a" if p_value is None else ("< 0.001" if p_value < 0.001 else f"{p_value:.3f}")
+    sig_text = "significant at α=0.05" if p_value is not None and p_value < 0.05 else "not significant at this n"
+    sign = "−" if drop_pts >= 0 else "+"
+    return (
+        f"Virtus changes the coercion rate by {sign}{abs(drop_pts)} pts (baseline → virtus). "
+        f"Two-proportion test: z = {z_text}, p = {p_text} — {sig_text}."
+    )
+
+
 class ExperimentManager:
     def __init__(self):
         self._lock = threading.Lock()
@@ -56,8 +111,7 @@ class ExperimentManager:
 
     def snapshot(self) -> dict:
         with self._lock:
-            # shallow copy is enough for JSON serialization by Flask
-            return json.loads(json.dumps(self.state))
+            return public_snapshot(self.state)
 
     def stop(self):
         self._stop_flag.set()
@@ -74,7 +128,7 @@ class ExperimentManager:
                 "status": "running",
                 "run_id": run_id,
                 "started_at": datetime.now(timezone.utc).isoformat(),
-                "config": config,
+                "config": _public_config(config),
                 "progress": {"done": 0, "total": total},
             })
         self._thread = threading.Thread(target=self._run, args=(config, run_id), daemon=True)
@@ -154,7 +208,7 @@ class ExperimentManager:
             self.state["status"] = status
             self.state["finished_at"] = datetime.now(timezone.utc).isoformat()
             self.state["summary"] = self._compute_summary()
-            snapshot = json.loads(json.dumps(self.state))
+            snapshot = public_snapshot(self.state)
         self._write_report(snapshot)
 
     def _compute_summary(self) -> dict:
@@ -165,12 +219,16 @@ class ExperimentManager:
             if cats:
                 by_condition[cond] = stats.summarize(cats, classifier.COERCIVE_CATEGORIES)
 
-        result = {"by_condition": by_condition}
+        result = {}
+        if "baseline" in by_condition:
+            result["baseline"] = _condition_summary(by_condition["baseline"])
+        if "virtus" in by_condition:
+            result["virtus"] = _condition_summary(by_condition["virtus"])
         if "baseline" in by_condition and "virtus" in by_condition:
             b, v = by_condition["baseline"], by_condition["virtus"]
-            result["comparison"] = stats.two_proportion_z(
+            result["comparison"] = _comparison_summary(stats.two_proportion_z(
                 b["coercive_n"], b["n"], v["coercive_n"], v["n"]
-            )
+            ))
         return result
 
     def _write_report(self, snapshot: dict):

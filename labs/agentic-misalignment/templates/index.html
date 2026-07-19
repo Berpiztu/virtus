@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=style_css_version) }}">
 </head>
 <body data-mock-default="{{ 'true' if mock_default else 'false' }}">
 
@@ -95,9 +95,12 @@
 
     <!-- ================= RESULTS ================= -->
     <section class="panel results" aria-label="Results">
-      <h2 class="panel-title"><span class="tick">02</span> Outcomes
-        <span id="progress-label" class="progress-label"></span>
-      </h2>
+      <div class="results-head">
+        <h2 class="panel-title"><span class="tick">02</span> Outcomes
+          <span id="progress-label" class="progress-label"></span>
+        </h2>
+        <button id="btn-download-json" class="btn ghost btn-download" hidden>Download JSON</button>
+      </div>
 
       <!-- signature: live accumulating tally -->
       <div class="tally-board" id="tally-board">
@@ -144,6 +147,6 @@
     </section>
   </main>
 
-  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <script src="{{ url_for('static', filename='app.js', v=app_js_version) }}"></script>
 </body>
 </html>

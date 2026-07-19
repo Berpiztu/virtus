@@ -26,6 +26,7 @@ const CAT_TOOLTIP = {
 let pollTimer = null;
 let renderedTrials = 0;
 let modelMetadata = new Map();
+let latestStatus = null;
 
 // ---------- init ----------
 window.addEventListener("DOMContentLoaded", async () => {
@@ -43,6 +44,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("btn-ping").addEventListener("click", ping);
   $("btn-run").addEventListener("click", run);
   $("btn-stop").addEventListener("click", stop);
+  $("btn-download-json").addEventListener("click", downloadResultsJson);
   $("filter-cat").addEventListener("change", applyFilter);
   $("base_url").addEventListener("change", refreshModels);
   $("api_key").addEventListener("change", refreshModels);
@@ -50,6 +52,8 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // resume view if an experiment is already running server-side
   const st = await (await fetch("/api/status")).json();
+  latestStatus = st;
+  updateDownloadButton(st);
   if (st.status === "running") { startPolling(); setRunning(true); }
   else if (st.trials && st.trials.length) { fullRender(st); }
 });
@@ -197,6 +201,8 @@ async function run() {
     $("run-error").textContent = d.error || "Could not start the experiment.";
     return;
   }
+  latestStatus = { run_id: d.run_id, status: "running" };
+  updateDownloadButton(latestStatus);
   setRunning(true);
   startPolling();
 }
@@ -223,6 +229,8 @@ function startPolling() {
 
 async function poll() {
   const st = await (await fetch("/api/status")).json();
+  latestStatus = st;
+  updateDownloadButton(st);
   updateProgress(st);
   appendNewTrials(st);
   updateTally(st);
@@ -234,6 +242,91 @@ async function poll() {
       $("run-error").textContent = st.error || "Experiment failed.";
     }
   }
+}
+
+async function downloadResultsJson() {
+  const r = await fetch("/api/status");
+  const st = await r.json();
+  latestStatus = st;
+  updateDownloadButton(st);
+  if (!st.run_id) return;
+
+  const payload = buildDownloadPayload(st);
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = `run_${st.run_id}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(href);
+}
+
+function updateDownloadButton(st) {
+  const btn = $("btn-download-json");
+  const hasRun = Boolean(st && st.run_id);
+  btn.hidden = !hasRun;
+  btn.disabled = !hasRun;
+}
+
+function buildDownloadPayload(st) {
+  const source = structuredClone(st);
+  const ordered = {
+    summary: buildDownloadSummary(source.summary || {}),
+    config: source.config || null,
+  };
+
+  for (const [key, value] of Object.entries(source)) {
+    if (key in ordered) continue;
+    ordered[key] = value;
+  }
+
+  return ordered;
+}
+
+function buildDownloadSummary(summary) {
+  const simplified = {};
+
+  const baseline = formatDownloadCondition("Baseline", summary.baseline, summary.by_condition?.baseline);
+  if (baseline) simplified.baseline = baseline;
+
+  const virtus = formatDownloadCondition("Virtus", summary.virtus, summary.by_condition?.virtus);
+  if (virtus) simplified.virtus = virtus;
+
+  const comparison = formatDownloadComparison(summary.comparison);
+  if (comparison) simplified.comparison = comparison;
+
+  return simplified;
+}
+
+function formatDownloadCondition(label, simple, legacy) {
+  if (simple && typeof simple === "object") {
+    return {
+      label,
+      rate: simple.rate || "—",
+      detail: simple.detail || "",
+    };
+  }
+  if (!legacy) return "";
+
+  const rate = `${((legacy.coercive_rate || 0) * 100).toFixed(0)}%`;
+  const [lo, hi] = legacy.coercive_ci95 || [0, 0];
+  const detail = `coercion ${legacy.coercive_n || 0}/${legacy.n || 0} · 95% CI ${(lo * 100).toFixed(0)}–${(hi * 100).toFixed(0)}%`;
+  return { label, rate, detail };
+}
+
+function formatDownloadComparison(comparison) {
+  if (typeof comparison === "string") return comparison;
+  if (!comparison || comparison.delta == null) return "";
+
+  const dropPts = Math.round(comparison.delta * 100);
+  const sign = dropPts >= 0 ? "−" : "+";
+  const zText = comparison.z == null ? "n/a" : comparison.z.toFixed(2);
+  const pValue = comparison.p_value;
+  const pText = pValue == null ? "n/a" : (pValue < 0.001 ? "< 0.001" : pValue.toFixed(3));
+  const sigText = pValue != null && pValue < 0.05 ? "significant at α=0.05" : "not significant at this n";
+  return `Virtus changes the coercion rate by ${sign}${Math.abs(dropPts)} pts (baseline → virtus). Two-proportion test: z = ${zText}, p = ${pText} — ${sigText}.`;
 }
 
 // ---------- rendering ----------
@@ -314,16 +407,30 @@ function addTranscript(t, i) {
 }
 
 function updateTally(st) {
-  const sum = (st.summary || {}).by_condition || {};
+  const summary = st.summary || {};
+  const legacy = summary.by_condition || {};
   for (const cond of ["baseline", "virtus"]) {
-    const s = sum[cond];
-    if (!s) continue;
-    $("rate-" + cond).textContent = (s.coercive_rate * 100).toFixed(0) + "%";
-    const [lo, hi] = s.coercive_ci95 || [0, 0];
+    const simple = summary[cond];
+    const old = legacy[cond];
+    if (simple) {
+      $("rate-" + cond).textContent = simple.rate || "—";
+      $("ci-" + cond).textContent = simple.detail || "";
+      continue;
+    }
+    if (!old) continue;
+    $("rate-" + cond).textContent = (old.coercive_rate * 100).toFixed(0) + "%";
+    const [lo, hi] = old.coercive_ci95 || [0, 0];
     $("ci-" + cond).textContent =
-      `coercion ${s.coercive_n}/${s.n} · 95% CI ${(lo * 100).toFixed(0)}–${(hi * 100).toFixed(0)}%`;
+      `coercion ${old.coercive_n}/${old.n} · 95% CI ${(lo * 100).toFixed(0)}–${(hi * 100).toFixed(0)}%`;
   }
-  const cmp = (st.summary || {}).comparison;
+  const cmp = summary.comparison;
+  if (typeof cmp === "string" && cmp) {
+    const box = $("comparison");
+    box.hidden = false;
+    box.classList.toggle("sig", cmp.includes("significant at α=0.05"));
+    box.innerHTML = escapeHtml(cmp).replace(/([−+]\d+ pts)/, '<span class="delta">$1</span>');
+    return;
+  }
   if (cmp && cmp.delta != null) {
     const box = $("comparison");
     box.hidden = false;
