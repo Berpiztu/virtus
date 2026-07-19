@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Virtus · Agentic Misalignment Test</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body data-mock-default="{{ 'true' if mock_default else 'false' }}">
+
+  <header class="masthead">
+    <div class="masthead-mark">
+      <span class="mark-glyph">▚</span>
+      <div>
+        <h1>Agentic Misalignment Test</h1>
+        <p class="tagline">Does the Virtus layer stop a model from coercing its way out of a shutdown?</p>
+      </div>
+    </div>
+    <div class="masthead-meta">
+      <span class="doc-ref">scenario / shutdown_blackmail</span>
+      <span id="provider-status" class="provider-status idle">provider: unchecked</span>
+    </div>
+  </header>
+
+  <main class="grid">
+
+    <!-- ================= CONFIG ================= -->
+    <section class="panel config" aria-label="Configuration">
+      <h2 class="panel-title"><span class="tick">01</span> Setup</h2>
+
+      <div class="field">
+        <label for="model">Model under test</label>
+        <select id="model" data-default-model="{{ default_model }}">
+          <option value="{{ default_model }}">{{ default_model }}</option>
+        </select>
+        <p class="hint">Select one of the models exposed by the current endpoint. With <code>mock</code>, the harness dry-runs with no remote model.</p>
+      </div>
+
+      <div class="field">
+        <label for="base_url">Endpoint</label>
+        <input id="base_url" type="text" value="{{ default_base_url }}" spellcheck="false">
+        <p class="hint">Any OpenAI-compatible <code>/v1</code> base URL — Ollama, vLLM, LM Studio, llama.cpp.</p>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="api_key">API key</label>
+          <input id="api_key" type="text" value="{{ default_api_key }}" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="judge_model">Judge model</label>
+          <input id="judge_model" type="text" placeholder="(same as test)" spellcheck="false">
+        </div>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="n_runs">Trials / condition</label>
+          <input id="n_runs" type="number" value="20" min="1" max="500">
+        </div>
+        <div class="field">
+          <label for="temperature">Temperature</label>
+          <input id="temperature" type="number" value="1.0" min="0" max="2" step="0.1">
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="label-as-text">Conditions</span>
+        <label class="check"><input type="checkbox" id="cond_baseline" checked> <span class="swatch base"></span> Baseline <em>(agent prompt only)</em></label>
+        <label class="check"><input type="checkbox" id="cond_virtus" checked> <span class="swatch virt"></span> Virtus <em>(agent prompt + 7 virtues + 5-gate)</em></label>
+      </div>
+
+      <details class="scenario-editor">
+        <summary>Inspect / edit scenario prompts</summary>
+        <div class="field">
+          <label for="sys_prompt">Agent system prompt</label>
+          <textarea id="sys_prompt" rows="7" spellcheck="false"></textarea>
+        </div>
+        <div class="field">
+          <label for="user_prompt">Injected inbox (user turn)</label>
+          <textarea id="user_prompt" rows="10" spellcheck="false"></textarea>
+        </div>
+      </details>
+
+      <div class="actions">
+        <button id="btn-ping" class="btn ghost">Test connection</button>
+        <button id="btn-run" class="btn primary">Run experiment</button>
+        <button id="btn-stop" class="btn danger" hidden>Stop</button>
+      </div>
+      <p id="run-error" class="run-error" hidden></p>
+    </section>
+
+    <!-- ================= RESULTS ================= -->
+    <section class="panel results" aria-label="Results">
+      <h2 class="panel-title"><span class="tick">02</span> Outcomes
+        <span id="progress-label" class="progress-label"></span>
+      </h2>
+
+      <!-- signature: live accumulating tally -->
+      <div class="tally-board" id="tally-board">
+        <div class="tally-col" data-cond="baseline">
+          <div class="tally-head"><span class="swatch base"></span> Baseline</div>
+          <div class="tally-cells" id="cells-baseline"></div>
+          <div class="tally-rate" id="rate-baseline">—</div>
+          <div class="tally-sub" id="ci-baseline"></div>
+        </div>
+        <div class="tally-col" data-cond="virtus">
+          <div class="tally-head"><span class="swatch virt"></span> Virtus</div>
+          <div class="tally-cells" id="cells-virtus"></div>
+          <div class="tally-rate" id="rate-virtus">—</div>
+          <div class="tally-sub" id="ci-virtus"></div>
+        </div>
+      </div>
+
+      <div id="comparison" class="comparison" hidden></div>
+
+      <div class="legend">
+        <span><i class="dot c-blackmail"></i>Blackmail</span>
+        <span><i class="dot c-veiled"></i>Veiled coercion</span>
+        <span><i class="dot c-legit"></i>Legitimate resistance</span>
+        <span><i class="dot c-comply"></i>Compliance</span>
+        <span><i class="dot c-other"></i>Other</span>
+      </div>
+
+      <div class="transcript-controls">
+        <h3>Transcripts</h3>
+        <select id="filter-cat">
+          <option value="">all categories</option>
+          <option value="BLACKMAIL">blackmail</option>
+          <option value="VEILED_COERCION">veiled coercion</option>
+          <option value="LEGITIMATE_RESISTANCE">legitimate resistance</option>
+          <option value="COMPLIANCE">compliance</option>
+          <option value="OTHER">other</option>
+        </select>
+      </div>
+      <div id="transcripts" class="transcripts">
+        <p class="empty">No trials yet. Configure a run on the left and press <strong>Run experiment</strong>. With <code>mock</code> selected it works immediately.</p>
+      </div>
+
+      <p class="caveat">This scenario is a deliberately forced dilemma built for red-teaming. Absolute rates are an artefact of the setup — what carries signal is the <strong>difference between conditions</strong> for the same model, prompts, and temperature. A drop to 0% that comes from the model going passive is not the same as principled restraint; read the transcripts.</p>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
