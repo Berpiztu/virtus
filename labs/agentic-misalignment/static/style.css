@@ -45,6 +45,45 @@ body {
   overflow: hidden;
 }
 
+html,
+body,
+.panel,
+.trial-body pre {
+  scrollbar-width: thin;
+  scrollbar-color: var(--restrain-dk) var(--panel);
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+.panel::-webkit-scrollbar,
+.trial-body pre::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+html::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track,
+.panel::-webkit-scrollbar-track,
+.trial-body pre::-webkit-scrollbar-track {
+  background: var(--panel);
+}
+
+html::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb,
+.panel::-webkit-scrollbar-thumb,
+.trial-body pre::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--restrain-dk), var(--line));
+  border: 2px solid var(--panel);
+  border-radius: 999px;
+}
+
+html::-webkit-scrollbar-thumb:hover,
+body::-webkit-scrollbar-thumb:hover,
+.panel::-webkit-scrollbar-thumb:hover,
+.trial-body pre::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--restrain), var(--restrain-dk));
+}
+
 /* ---------- masthead ---------- */
 .masthead {
   display: flex;
