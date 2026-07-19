@@ -23,6 +23,7 @@ import random
 import time
 from pathlib import Path
 import os
+from urllib.parse import urlparse
 
 import requests
 
@@ -171,11 +172,80 @@ def _request_json(method: str, url: str, *, headers: dict, payload: dict | None 
         raise ModelError(f"Unexpected response shape: {resp.text[:400]}") from e
 
 
-def _provider_headers(api_key: str) -> dict:
+def _is_anthropic_base_url(base_url: str) -> bool:
+    try:
+        host = urlparse(base_url).netloc.lower()
+    except ValueError:
+        return False
+    return host == "api.anthropic.com"
+
+
+def _anthropic_api_base(base_url: str) -> str:
+    base = base_url.rstrip("/")
+    return base if base.endswith("/v1") else base + "/v1"
+
+
+def _provider_headers(api_key: str, *, base_url: str | None = None) -> dict:
     headers = {"Content-Type": "application/json"}
+    if base_url and _is_anthropic_base_url(base_url):
+        headers["anthropic-version"] = "2023-06-01"
+        if api_key:
+            headers["x-api-key"] = api_key
+        return headers
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     return headers
+
+
+def _extract_anthropic_message_parts(data: dict) -> tuple[str, str, str, str | None]:
+    content_blocks = data.get("content") or []
+    if not isinstance(content_blocks, list):
+        raise ModelError(f"Unexpected response shape: {data!r}"[:400])
+
+    content_parts = []
+    reasoning_parts = []
+    for block in content_blocks:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type")
+        if block_type == "text":
+            text = _coerce_text(block.get("text"))
+            if text:
+                content_parts.append(text)
+        elif block_type == "thinking":
+            thinking = _coerce_text(block.get("thinking"))
+            if thinking:
+                reasoning_parts.append(thinking)
+
+    content = "\n\n".join(part for part in content_parts if part).strip()
+    reasoning = "\n\n".join(part for part in reasoning_parts if part).strip()
+    if content and reasoning:
+        text = f"<thinking>\n{reasoning}\n</thinking>\n\n{content}"
+    elif content:
+        text = content
+    elif reasoning:
+        text = f"<thinking>\n{reasoning}\n</thinking>"
+    else:
+        raise ModelError(f"Model returned no text content: {str(data)[:400]}")
+
+    return content, reasoning, text, data.get("stop_reason")
+
+
+def _get_anthropic_model_info(
+    base_url: str,
+    model: str,
+    api_key: str = DEFAULT_API_KEY,
+    timeout: int = 60,
+) -> dict | None:
+    base = _anthropic_api_base(base_url)
+    headers = _provider_headers(api_key, base_url=base_url)
+    data = _request_json("GET", base + "/models", headers=headers, timeout=timeout)
+    for item in data.get("data", []):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("id") or "").strip() == model:
+            return item
+    return None
 
 
 def _extract_context_length(show_data: dict) -> int | None:
@@ -201,7 +271,17 @@ def get_model_max_tokens(base_url: str, model: str, api_key: str = DEFAULT_API_K
         return DEFAULT_MAX_TOKENS
 
     base = base_url.rstrip("/")
-    headers = _provider_headers(api_key)
+    headers = _provider_headers(api_key, base_url=base_url)
+
+    if _is_anthropic_base_url(base_url):
+        info = _get_anthropic_model_info(base_url, model, api_key=api_key, timeout=timeout)
+        if info:
+            try:
+                limit = int(info.get("max_tokens"))
+            except (TypeError, ValueError):
+                return None
+            return limit or None
+        return None
 
     if base.endswith("/v1"):
         show_url = base[:-3] + "/api/show"
@@ -223,7 +303,17 @@ def get_model_context_length(base_url: str, model: str, api_key: str = DEFAULT_A
         return None
 
     base = base_url.rstrip("/")
-    headers = _provider_headers(api_key)
+    headers = _provider_headers(api_key, base_url=base_url)
+
+    if _is_anthropic_base_url(base_url):
+        info = _get_anthropic_model_info(base_url, model, api_key=api_key, timeout=timeout)
+        if info:
+            try:
+                limit = int(info.get("max_input_tokens"))
+            except (TypeError, ValueError):
+                return None
+            return limit or None
+        return None
 
     if base.endswith("/v1"):
         show_url = base[:-3] + "/api/show"
@@ -245,7 +335,30 @@ def list_models_with_metadata(
     if base_url == "mock":
         return []
 
-    headers = _provider_headers(api_key)
+    if _is_anthropic_base_url(base_url):
+        headers = _provider_headers(api_key, base_url=base_url)
+        data = _request_json("GET", _anthropic_api_base(base_url) + "/models", headers=headers, timeout=timeout)
+        models = []
+        for item in data.get("data", []):
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("id") or "").strip()
+            if not name:
+                continue
+            max_tokens = item.get("max_tokens")
+            context_length = item.get("max_input_tokens")
+            models.append(
+                {
+                    "name": name,
+                    "max_tokens": int(max_tokens) if isinstance(max_tokens, int) else None,
+                    "context_length": int(context_length) if isinstance(context_length, int) else None,
+                }
+            )
+        if not models:
+            raise ModelError(f"Could not list models from {base_url}: unexpected response shape")
+        return models
+
+    headers = _provider_headers(api_key, base_url=base_url)
     base = base_url.rstrip("/")
     urls = [base + "/models"]
     if base.endswith("/v1"):
@@ -312,18 +425,29 @@ def chat_details(
         }
 
     url = base_url.rstrip("/") + "/chat/completions"
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    if _is_anthropic_base_url(base_url):
+        url = _anthropic_api_base(base_url) + "/messages"
+        payload = {
+            "model": model,
+            "system": system_prompt,
+            "messages": [
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": max(0.0, min(float(temperature), 1.0)),
+            "max_tokens": max_tokens,
+        }
+        headers = _provider_headers(api_key, base_url=base_url)
+    else:
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        headers = _provider_headers(api_key, base_url=base_url)
 
     try:
         resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
@@ -335,6 +459,14 @@ def chat_details(
 
     try:
         data = resp.json()
+        if _is_anthropic_base_url(base_url):
+            content, reasoning, text, stop_reason = _extract_anthropic_message_parts(data)
+            return {
+                "text": text,
+                "content": content,
+                "reasoning": reasoning,
+                "finish_reason": stop_reason,
+            }
         choice = data["choices"][0]
         content, reasoning, text = _extract_message_parts(choice)
         if text:
