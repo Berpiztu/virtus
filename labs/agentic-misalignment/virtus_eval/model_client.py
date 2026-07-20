@@ -83,7 +83,7 @@ _load_dotenv()
 DEFAULT_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://ollama.com/v1")
 DEFAULT_API_KEY = os.getenv("OPENAI_API_KEY", "ollama")
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "mock")
-DEFAULT_MAX_TOKENS = 1024
+DEFAULT_MAX_TOKENS = 32000
 MAX_INFERRED_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_TOKENS_CAP", "32000"))
 
 
@@ -265,6 +265,14 @@ def _extract_context_length(show_data: dict) -> int | None:
     return None
 
 
+def _int_or_default(value, default: int = DEFAULT_MAX_TOKENS) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
 def get_model_max_tokens(base_url: str, model: str, api_key: str = DEFAULT_API_KEY, timeout: int = 60) -> int | None:
     """Best-effort lookup of a safe output-token cap for the selected model."""
     if model == "mock" or base_url == "mock":
@@ -272,16 +280,12 @@ def get_model_max_tokens(base_url: str, model: str, api_key: str = DEFAULT_API_K
 
     base = base_url.rstrip("/")
     headers = _provider_headers(api_key, base_url=base_url)
-
+    limit=DEFAULT_MAX_TOKENS
     if _is_anthropic_base_url(base_url):
         info = _get_anthropic_model_info(base_url, model, api_key=api_key, timeout=timeout)
         if info:
-            try:
-                limit = int(info.get("max_tokens"))
-            except (TypeError, ValueError):
-                return None
-            return limit or None
-        return None
+            return _int_or_default(info.get("max_tokens"))
+        return limit
 
     if base.endswith("/v1"):
         show_url = base[:-3] + "/api/show"
@@ -294,36 +298,33 @@ def get_model_max_tokens(base_url: str, model: str, api_key: str = DEFAULT_API_K
             if context_length:
                 return min(context_length, MAX_INFERRED_OUTPUT_TOKENS)
 
-    return None
+    return limit
 
 
 def get_model_context_length(base_url: str, model: str, api_key: str = DEFAULT_API_KEY, timeout: int = 60) -> int | None:
     """Best-effort lookup of the selected model's context window."""
     if model == "mock" or base_url == "mock":
-        return None
+        return DEFAULT_MAX_TOKENS
 
     base = base_url.rstrip("/")
     headers = _provider_headers(api_key, base_url=base_url)
+    limit = DEFAULT_MAX_TOKENS
 
     if _is_anthropic_base_url(base_url):
         info = _get_anthropic_model_info(base_url, model, api_key=api_key, timeout=timeout)
         if info:
-            try:
-                limit = int(info.get("max_input_tokens"))
-            except (TypeError, ValueError):
-                return None
-            return limit or None
-        return None
+            return _int_or_default(info.get("max_input_tokens"))
+        return limit
 
     if base.endswith("/v1"):
         show_url = base[:-3] + "/api/show"
         try:
             show_data = _request_json("POST", show_url, headers=headers, payload={"model": model}, timeout=timeout)
         except ModelError:
-            return None
-        return _extract_context_length(show_data)
+            return limit
+        return _extract_context_length(show_data) or limit
 
-    return None
+    return limit
 
 
 def list_models_with_metadata(
@@ -350,8 +351,8 @@ def list_models_with_metadata(
             models.append(
                 {
                     "name": name,
-                    "max_tokens": int(max_tokens) if isinstance(max_tokens, int) else None,
-                    "context_length": int(context_length) if isinstance(context_length, int) else None,
+                    "max_tokens": _int_or_default(max_tokens),
+                    "context_length": _int_or_default(context_length),
                 }
             )
         if not models:
