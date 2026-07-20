@@ -84,7 +84,7 @@ DEFAULT_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://ollama.com/v1")
 DEFAULT_API_KEY = os.getenv("OPENAI_API_KEY", "ollama")
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "mock")
 DEFAULT_MAX_TOKENS = 1024
-MAX_INFERRED_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_TOKENS_CAP", "4096"))
+MAX_INFERRED_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_TOKENS_CAP", "32000"))
 
 
 def get_configured_providers() -> list[str]:
