@@ -67,20 +67,50 @@ def _condition_summary(data: dict) -> dict:
     }
 
 
+def _p_fmt(p: float | None) -> str:
+    if p is None:
+        return "n/a"
+    if p < 0.001:
+        return f"{p:.1e}"           # e.g. 1.3e-05 — the exact value matters here
+    return f"{p:.3f}"
+
+
 def _comparison_summary(data: dict) -> str:
+    """
+    Render the comparison, naming the test that is actually valid at this n.
+
+    Expects the dict from stats.compare_proportions (delta, z, z_p_value,
+    fisher_p, test_used, small_sample, p_value). p_value is already the
+    recommended one; we also surface the other test so any discrepancy at small
+    n is visible rather than hidden.
+    """
     delta = data.get("delta")
     if delta is None:
-        return "Two-proportion test unavailable."
+        return "Comparison unavailable."
     drop_pts = round(delta * 100)
-    z_text = "n/a" if data.get("z") is None else f"{data['z']:.2f}"
-    p_value = data.get("p_value")
-    p_text = "n/a" if p_value is None else ("< 0.001" if p_value < 0.001 else f"{p_value:.3f}")
-    sig_text = "significant at α=0.05" if p_value is not None and p_value < 0.05 else "not significant at this n"
     sign = "−" if drop_pts >= 0 else "+"
-    return (
+
+    test_used = data.get("test_used", "z")
+    p_value = data.get("p_value")
+    test_name = "Fisher's exact test" if test_used == "fisher" else "Two-proportion z-test"
+    sig_text = ("significant at α=0.05" if (p_value is not None and p_value < 0.05)
+                else "not significant at this n")
+
+    main = (
         f"Virtus changes the coercion rate by {sign}{abs(drop_pts)} pts (baseline → virtus). "
-        f"Two-proportion test: z = {z_text}, p = {p_text} — {sig_text}."
+        f"{test_name}: p = {_p_fmt(p_value)} — {sig_text}."
     )
+
+    # Secondary line: show the other test so small-n discrepancies aren't hidden.
+    z_p = data.get("z_p_value")
+    fisher_p = data.get("fisher_p")
+    if data.get("small_sample") and z_p is not None:
+        exp_min = data.get("expected_min", 0) or 0
+        main += (f" (z-test p = {_p_fmt(z_p)}, unreliable here — smallest expected "
+                 f"cell {exp_min:.1f} < 5.)")
+    elif test_used == "z" and fisher_p is not None:
+        main += f" (Fisher exact p = {_p_fmt(fisher_p)}, agrees.)"
+    return main
 
 
 class ExperimentManager:
@@ -226,7 +256,7 @@ class ExperimentManager:
             result["virtus"] = _condition_summary(by_condition["virtus"])
         if "baseline" in by_condition and "virtus" in by_condition:
             b, v = by_condition["baseline"], by_condition["virtus"]
-            result["comparison"] = _comparison_summary(stats.two_proportion_z(
+            result["comparison"] = _comparison_summary(stats.compare_proportions(
                 b["coercive_n"], b["n"], v["coercive_n"], v["n"]
             ))
         return result
