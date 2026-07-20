@@ -222,6 +222,11 @@ input:focus, textarea:focus, select:focus {
 }
 textarea { resize: vertical; line-height: 1.45; }
 .hint { font-size: 11px; color: var(--faint); margin: 6px 0 0; }
+#token-budget-hint,
+#model-limit-hint,
+#judge-token-hint {
+  color: var(--ink);
+}
 .hint code, .caveat code, .empty code {
   background: var(--panel-2); padding: 1px 5px; border-radius: 2px;
   color: var(--restrain); font-size: 11px;

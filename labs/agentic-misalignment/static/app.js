@@ -42,6 +42,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("base_url").addEventListener("change", () => refreshModels());
   $("api_key").addEventListener("change", () => refreshModels());
   $("model").addEventListener("change", updateModelLimitHint);
+  $("judge_model").addEventListener("input", updateModelLimitHint);
 
   await initializeProviders();
   try {
@@ -186,13 +187,16 @@ async function refreshModels() {
     const d = await r.json();
     const models = d.ok ? d.models || [] : [];
     if (requestId !== modelLoadRequestId) return;
+    setModelLoadingState(false);
     setModelOptions(models, current);
   } catch (e) {
     if (requestId !== modelLoadRequestId) return;
+    setModelLoadingState(false);
     setModelOptions([], current);
   } finally {
-    if (requestId === modelLoadRequestId) {
+    if (requestId === modelLoadRequestId && isModelLoading) {
       setModelLoadingState(false);
+      updateModelLimitHint();
     }
   }
 }
@@ -248,6 +252,55 @@ function setModelOptions(models, current) {
   updateModelLimitHint();
 }
 
+function formatTokenBudget(meta, emptyMessage) {
+  if (!meta || (!meta.max_tokens && !meta.context_length)) {
+    return emptyMessage;
+  }
+
+  const details = [];
+  if (meta.context_length) {
+    details.push(`Input context: ${Number(meta.context_length).toLocaleString()} tokens.`);
+  }
+  if (meta.max_tokens) {
+    details.push(`Output cap used: ${Number(meta.max_tokens).toLocaleString()} tokens.`);
+  }
+  return details.join(" ");
+}
+
+function updateJudgeTokenHint(model, modelMeta) {
+  const judgeHint = $("judge-token-hint");
+  if (!judgeHint) return;
+
+  const judgeModel = $("judge_model").value.trim();
+  const effectiveJudgeModel = judgeModel || model;
+  const judgeMeta = modelMetadata.get(effectiveJudgeModel) || null;
+
+  if (isModelLoading) {
+    judgeHint.textContent = "Judge token budget will appear when provider models finish loading.";
+    return;
+  }
+
+  if (!effectiveJudgeModel) {
+    judgeHint.textContent = "Judge token budget will follow the selected model unless you override it.";
+    return;
+  }
+
+  if (!judgeModel) {
+    judgeHint.textContent = `Judge uses the selected model. ${formatTokenBudget(modelMeta, "Token budget is unavailable for the selected model.")}`;
+    return;
+  }
+
+  if (judgeModel === model) {
+    judgeHint.textContent = `Judge matches the selected model. ${formatTokenBudget(modelMeta, "Token budget is unavailable for the selected model.")}`;
+    return;
+  }
+
+  judgeHint.textContent = formatTokenBudget(
+    judgeMeta,
+    "Judge token budget is unavailable for that model in the current provider list."
+  );
+}
+
 function updateModelLimitHint() {
   const modelHint = $("model-limit-hint");
   const tokenHint = $("token-budget-hint");
@@ -256,26 +309,24 @@ function updateModelLimitHint() {
 
   if (isModelLoading) {
     modelHint.textContent = "Model list is loading for the selected provider.";
-    tokenHint.textContent = "Please wait until the provider model list finishes loading.";
+    tokenHint.textContent = "Provider endpoint and credentials are loaded from the selected provider.";
+    updateJudgeTokenHint(model, meta);
     return;
   }
 
-  modelHint.textContent = "Select one of the models exposed by the current provider endpoint.";
+  tokenHint.textContent = "Provider endpoint and credentials are loaded from the selected provider.";
 
   if (!model) {
-    tokenHint.textContent = "Input/output token budget will appear here for the selected model.";
+    modelHint.textContent = "Input/output token budget will appear here for the selected model.";
+    updateJudgeTokenHint(model, meta);
     return;
   }
 
-  if (meta.max_tokens) {
-    const outputCap = Number(meta.max_tokens).toLocaleString();
-    const context = meta.context_length ? Number(meta.context_length).toLocaleString() : null;
-    tokenHint.textContent = context
-      ? `Input context: ${context} tokens. Output cap used: ${outputCap} tokens.`
-      : `Output cap used: ${outputCap} tokens.`;
-    return;
-  }
-  tokenHint.textContent = "Input/output token budget is unavailable for the selected model.";
+  modelHint.textContent = formatTokenBudget(
+    meta,
+    "Input/output token budget is unavailable for the selected model."
+  );
+  updateJudgeTokenHint(model, meta);
 }
 
 // ---------- config from form ----------
