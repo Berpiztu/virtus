@@ -28,6 +28,8 @@ let renderedTrials = 0;
 let modelMetadata = new Map();
 let latestStatus = null;
 let providerConfigs = new Map();
+let isModelLoading = false;
+let modelLoadRequestId = 0;
 
 // ---------- init ----------
 window.addEventListener("DOMContentLoaded", async () => {
@@ -130,13 +132,50 @@ function updateProviderStatusIdle() {
   badge.textContent = "";
 }
 
+function setModelLoadingState(loading) {
+  isModelLoading = loading;
+  const configPanel = document.querySelector(".panel.config");
+  if (configPanel) {
+    configPanel.classList.toggle("is-loading", loading);
+  }
+
+  for (const id of ["provider", "base_url", "api_key", "model", "btn-ping", "btn-run"]) {
+    const element = $(id);
+    if (element) {
+      element.disabled = loading;
+    }
+  }
+
+  const badge = $("provider-status");
+  if (loading) {
+    badge.hidden = false;
+    badge.className = "provider-status loading";
+    badge.textContent = "Loading models...";
+    return;
+  }
+
+  updateProviderStatusIdle();
+}
+
+function clearModelOptions(message = "Loading models...") {
+  const select = $("model");
+  modelMetadata = new Map();
+  select.innerHTML = `<option value="">${escapeHtml(message)}</option>`;
+  select.value = "";
+  updateModelLimitHint();
+}
+
 async function refreshModels() {
   const select = $("model");
   const current = select.value || select.dataset.defaultModel || "";
+  const requestId = ++modelLoadRequestId;
   const request = {
     base_url: $("base_url") ? $("base_url").value.trim() : "",
     api_key: $("api_key") ? $("api_key").value.trim() : "",
   };
+
+  clearModelOptions();
+  setModelLoadingState(true);
 
   try {
     const r = await fetch("/api/models", {
@@ -146,9 +185,15 @@ async function refreshModels() {
     });
     const d = await r.json();
     const models = d.ok ? d.models || [] : [];
+    if (requestId !== modelLoadRequestId) return;
     setModelOptions(models, current);
   } catch (e) {
+    if (requestId !== modelLoadRequestId) return;
     setModelOptions([], current);
+  } finally {
+    if (requestId === modelLoadRequestId) {
+      setModelLoadingState(false);
+    }
   }
 }
 
@@ -208,6 +253,13 @@ function updateModelLimitHint() {
   const tokenHint = $("token-budget-hint");
   const model = $("model").value.trim();
   const meta = modelMetadata.get(model) || {};
+
+  if (isModelLoading) {
+    modelHint.textContent = "Model list is loading for the selected provider.";
+    tokenHint.textContent = "Please wait until the provider model list finishes loading.";
+    return;
+  }
+
   modelHint.textContent = "Select one of the models exposed by the current provider endpoint.";
 
   if (!model) {

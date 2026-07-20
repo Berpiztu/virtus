@@ -134,6 +134,7 @@ body::-webkit-scrollbar-thumb:hover,
   white-space: nowrap;
 }
 .provider-status.idle { color: var(--muted); }
+.provider-status.loading { color: var(--c-veiled); border-color: var(--c-veiled); }
 .provider-status.ok   { color: var(--restrain); border-color: var(--restrain-dk); }
 .provider-status.bad  { color: var(--coerce);   border-color: var(--coerce-dk); }
 
@@ -153,6 +154,32 @@ body::-webkit-scrollbar-thumb:hover,
   min-width: 0;
   min-height: 0;
   overflow: auto;
+}
+.panel.config {
+  position: relative;
+}
+.panel.config.is-loading::after {
+  content: "⌛ Loading models...";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 19, 25, 0.72);
+  color: var(--ink);
+  font-family: var(--display);
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  backdrop-filter: blur(2px);
+  z-index: 3;
+}
+.panel.config.is-loading .field,
+.panel.config.is-loading .field-row,
+.panel.config.is-loading .scenario-editor,
+.panel.config.is-loading .actions,
+.panel.config.is-loading .run-error {
+  pointer-events: none;
 }
 .panel-title {
   font-family: var(--display);
