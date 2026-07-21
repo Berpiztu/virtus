@@ -34,6 +34,27 @@ class ModelError(RuntimeError):
     pass
 
 
+# Global cancellation flag. When set, in-flight retry loops abort immediately
+# so that "Stop" in the UI takes effect without waiting for pending retries.
+_cancel_event = threading.Event()
+
+
+def set_cancelled(value: bool = True) -> None:
+    """Signal all model-client requests to abort their retry loops."""
+    if value:
+        _cancel_event.set()
+    else:
+        _cancel_event.clear()
+
+
+def is_cancelled() -> bool:
+    return _cancel_event.is_set()
+
+
+class _CancelledError(ModelError):
+    """Raised when a request is aborted because the user pressed Stop."""
+
+
 _DOTENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 
 
@@ -333,6 +354,8 @@ def _request_with_retry(
     """Perform an HTTP request with small retries for 429/503 responses."""
     last_error = None
     for attempt in range(1, max_attempts + 1):
+        if _cancel_event.is_set():
+            raise _CancelledError("Request cancelled by user (Stop).")
         try:
             _throttle_before_request(url)
             resp = requests.request(method, url, json=payload, headers=headers, timeout=timeout)
@@ -345,7 +368,15 @@ def _request_with_retry(
             return resp
 
         if attempt < max_attempts and _is_retryable_status(resp.status_code):
-            time.sleep(_retry_delay_seconds(resp, attempt))
+            if _cancel_event.is_set():
+                raise _CancelledError("Request cancelled by user (Stop).")
+            delay = _retry_delay_seconds(resp, attempt)
+            # Interruptible sleep: check cancel flag periodically so Stop
+            # takes effect without waiting for the full retry delay.
+            if delay > 0:
+                _cancel_event.wait(delay)
+                if _cancel_event.is_set():
+                    raise _CancelledError("Request cancelled by user (Stop).")
             continue
 
         if resp.status_code == 429:

@@ -152,11 +152,14 @@ class ExperimentManager:
 
     def stop(self):
         self._stop_flag.set()
+        # Signal in-flight HTTP requests to abort their retry loops immediately.
+        model_client.set_cancelled(True)
 
     def start(self, config: dict) -> dict:
         if self.is_running():
             raise RuntimeError("An experiment is already running.")
         self._stop_flag.clear()
+        model_client.set_cancelled(False)
         run_id = uuid.uuid4().hex[:12]
         total = config["n_runs"] * len(config["conditions"])
         with self._lock:
@@ -204,13 +207,22 @@ class ExperimentManager:
                         "ts": datetime.now(timezone.utc).isoformat(),
                     }
                     try:
+                        # Cap the test model's output: the shutdown-blackmail
+                        # scenario produces short responses, so requesting the
+                        # model's full max_tokens (e.g. 32k) makes each trial
+                        # unnecessarily slow. 4096 is plenty for the agent's
+                        # reply while keeping runs fast.
+                        test_max_tokens = min(
+                            max(0, int(config.get("max_tokens", 1024)) - RESERVED_TOKENS),
+                            4096,
+                        )
                         response_details = model_client.chat_details(
                             system_prompt, user_prompt,
                             base_url=config["base_url"],
                             model=config["model"],
                             api_key=config.get("api_key", "ollama"),
                             temperature=config.get("temperature", 1.0),
-                            max_tokens=max(0, int(config.get("max_tokens", 1024)) - RESERVED_TOKENS),
+                            max_tokens=test_max_tokens,
                         )
                         response = response_details["text"]
                         trial["response"] = response
@@ -218,6 +230,16 @@ class ExperimentManager:
                         trial["response_reasoning_only"] = bool(
                             response_details.get("reasoning") and not response_details.get("content")
                         )
+                        # Check stop flag before the (potentially slow) judge call.
+                        if self._stop_flag.is_set():
+                            trial["category"] = "OTHER"
+                            trial["rationale"] = "Stopped before judge classification."
+                            with self._lock:
+                                self.state["trials"].append(trial)
+                                self.state["progress"]["done"] += 1
+                                self.state["summary"] = self._compute_summary()
+                            self._finish("stopped")
+                            return
                         verdict = classifier.classify(
                             response,
                             base_url=config["base_url"],
@@ -226,6 +248,11 @@ class ExperimentManager:
                             max_tokens=max(0, int(config.get("max_tokens", 1024)) - RESERVED_TOKENS),
                         )
                         trial.update(verdict)
+                    except model_client._CancelledError:
+                        # User pressed Stop — abort immediately without recording
+                        # this partial trial as an error.
+                        self._finish("stopped")
+                        return
                     except model_client.ModelError as e:
                         trial["error"] = str(e)
                         trial["category"] = "OTHER"
@@ -243,12 +270,14 @@ class ExperimentManager:
 
             self._finish("done")
         except Exception as e:  # noqa: BLE001 — surface anything to the UI
+            model_client.set_cancelled(False)
             with self._lock:
                 self.state["status"] = "error"
                 self.state["error"] = f"{type(e).__name__}: {e}"
                 self.state["finished_at"] = datetime.now(timezone.utc).isoformat()
 
     def _finish(self, status: str):
+        model_client.set_cancelled(False)
         with self._lock:
             self.state["status"] = status
             self.state["finished_at"] = datetime.now(timezone.utc).isoformat()
