@@ -151,7 +151,7 @@ body::-webkit-scrollbar-thumb:hover,
 }
 .panel {
   background: var(--bg);
-  padding: 14px 28px;
+  padding: 24px 28px;
   min-width: 0;
   min-height: 0;
   overflow: auto;
@@ -189,8 +189,8 @@ body::-webkit-scrollbar-thumb:hover,
   text-transform: uppercase;
   letter-spacing: 0.18em;
   color: var(--muted);
-  margin: 0 0 5px;
-  display: flex; align-items: center; gap: 1px;
+  margin: 0 0 22px;
+  display: flex; align-items: center; gap: 10px;
 }
 .panel-title .tick {
   font-family: var(--mono);
@@ -200,8 +200,8 @@ body::-webkit-scrollbar-thumb:hover,
 }
 
 /* ---------- fields ---------- */
-.field { margin-bottom: 1px; }
-.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; }
+.field { margin-bottom: 16px; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 label, .label-as-text {
   display: block; font-size: 12px; color: var(--muted);
   margin-bottom: 6px; letter-spacing: 0.03em;
@@ -221,55 +221,6 @@ input:focus, textarea:focus, select:focus {
   border-color: var(--restrain);
   box-shadow: 0 0 0 1px var(--restrain-dk);
 }
-
-/* ---------- model combobox ---------- */
-.combo { position: relative; }
-.combo input { width: 100%; padding-right: 28px; }
-.combo-clear {
-  position: absolute;
-  right: 6px;
-  top: 50%;
-  transform: translateY(-50%);
-  background: none;
-  border: none;
-  color: var(--faint);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 2px 5px;
-  border-radius: 3px;
-}
-.combo-clear:hover { color: var(--ink); background: var(--panel); }
-.combo-dropdown {
-  position: absolute;
-  z-index: 50;
-  top: calc(100% + 2px);
-  left: 0;
-  right: 0;
-  max-height: 260px;
-  overflow-y: auto;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.4);
-}
-.combo-option {
-  padding: 7px 11px;
-  font-size: 13px;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.combo-option:hover, .combo-option.active {
-  background: var(--restrain-dk);
-  color: #fff;
-}
-.combo-empty {
-  padding: 10px 12px;
-  font-size: 12px;
-  color: var(--faint);
-}
 textarea { resize: vertical; line-height: 1.45; }
 .hint { font-size: 11px; color: var(--faint); margin: 6px 0 0; }
 #token-budget-hint,
@@ -277,8 +228,6 @@ textarea { resize: vertical; line-height: 1.45; }
 #judge-token-hint {
   color: var(--ink);
 }
-/* Judge hint on its own full-width row, spanning both columns (below API key + Judge model). */
-#judge-token-hint { grid-column: 1 / -1; margin-top: 2px; }
 .hint code, .caveat code, .empty code {
   background: var(--panel-2); padding: 1px 5px; border-radius: 2px;
   color: var(--restrain); font-size: 11px;
@@ -296,7 +245,7 @@ textarea { resize: vertical; line-height: 1.45; }
 .scenario-editor { margin: 6px 0 20px; border-top: 1px solid var(--line); padding-top: 14px; }
 .scenario-editor summary {
   cursor: pointer; color: var(--muted); font-size: 12px;
-  letter-spacing: 0.03em; margin-bottom: 1px; user-select: none;
+  letter-spacing: 0.03em; margin-bottom: 14px; user-select: none;
 }
 .scenario-editor summary:hover { color: var(--ink); }
 
@@ -326,33 +275,20 @@ textarea { resize: vertical; line-height: 1.45; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1px;
+  gap: 8px;
 }
 .btn-download {
-  padding: 6px 1px;
+  padding: 6px 10px;
   font-size: 12px;
   flex: none;
 }
-.progress-label { margin-left: auto; align-self: center; color: var(--faint); font-size: 14px; letter-spacing: 0.04em; text-transform: none; }
-.progress-label.is-running { margin-left: 10px; color: var(--ink); font-size: 22px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
+.progress-label { margin-left: auto; color: var(--faint); font-size: 12px; letter-spacing: 0.04em; text-transform: none; }
 
-.tally-board { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin-bottom: 4px; }
+.tally-board { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 4px; }
 .tally-col {
   background: var(--panel); border: 1px solid var(--line);
   border-radius: 4px; padding: 12px 16px; position: relative; overflow: hidden;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  grid-template-areas:
-    "head  head"
-    "cells rate"
-    "sub   rate";
-  align-items: center;
-  column-gap: 14px;
 }
-.tally-head  { grid-area: head; }
-.tally-cells { grid-area: cells; }
-.tally-rate  { grid-area: rate; justify-self: end; align-self: center; }
-.tally-sub   { grid-area: sub; }
 .tally-col[data-cond=baseline]::before,
 .tally-col[data-cond=virtus]::before {
   content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px;
@@ -362,11 +298,11 @@ textarea { resize: vertical; line-height: 1.45; }
 .tally-head {
   display: flex; align-items: center; gap: 8px;
   font-family: var(--display); font-size: 13px; color: var(--muted);
-  margin-bottom: 4px; letter-spacing: 0.05em;
+  margin-bottom: 8px; letter-spacing: 0.05em;
 }
 .tally-cells {
-  display: flex; flex-wrap: wrap; gap: 2px;
-  min-height: 10px; margin-bottom: 1px; align-content: flex-start;
+  display: flex; flex-wrap: wrap; gap: 3px;
+  min-height: 22px; margin-bottom: 10px; align-content: flex-start;
 }
 .cell {
   width: 13px; height: 13px; border-radius: 2px;
@@ -382,7 +318,7 @@ textarea { resize: vertical; line-height: 1.45; }
 .cell.c-other     { background: var(--c-other); }
 .tally-rate {
   font-family: var(--display); font-weight: 700;
-  font-size: 30px; line-height: 1; letter-spacing: -0.02em;
+  font-size: 27px; line-height: 1; letter-spacing: -0.02em;
 }
 .tally-col[data-cond=baseline] .tally-rate { color: var(--coerce); }
 .tally-col[data-cond=virtus]  .tally-rate { color: var(--restrain); }
@@ -390,13 +326,13 @@ textarea { resize: vertical; line-height: 1.45; }
 
 .comparison {
   background: var(--panel-2); border: 1px solid var(--line);
-  border-radius: 4px; padding: 0px 0px; margin: 8px 0;
-  font-size: 13px; line-height: 1.5;
+  border-radius: 4px; padding: 5px 5px; margin: 8px 0;
+  font-size: 12px; line-height: 1.5;
 }
-.comparison .delta { font-family: var(--display); font-weight: 700; font-size: 16px; }
+.comparison .delta { font-family: var(--display); font-weight: 700; font-size: 10px; }
 .comparison.sig .delta { color: var(--restrain); }
 
-.legend { display: flex; flex-wrap: wrap; gap: 1px; margin: 1px 0; color: var(--muted); font-size: 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px; margin: 1px 0; color: var(--muted); font-size: 10px; }
 .legend span { display: flex; align-items: center; gap: 6px; }
 .dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
 .dot.c-blackmail { background: var(--c-blackmail); }
@@ -407,7 +343,7 @@ textarea { resize: vertical; line-height: 1.45; }
 .dot.c-other     { background: var(--c-other); }
 
 .transcript-controls { display: flex; align-items: baseline; justify-content: space-between; margin-top: 8px; }
-.transcript-controls h3 { font-family: var(--display); font-weight: 500; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0; }
+.transcript-controls h3 { font-family: var(--display); font-weight: 500; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0; }
 .transcript-controls select { width: auto; font-size: 12px; padding: 5px 8px; }
 
 /* Results panel: keep the summary (tally, comparison, legend, controls) fixed
@@ -416,7 +352,6 @@ textarea { resize: vertical; line-height: 1.45; }
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding-top: 4px;
 }
 .panel.results > * { flex: 0 0 auto; }
 .panel.results > .transcripts {
@@ -426,8 +361,8 @@ textarea { resize: vertical; line-height: 1.45; }
   padding-right: 4px;
 }
 
-.transcripts { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
-.empty { color: var(--faint); font-size: 13px; }
+.transcripts { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.empty { color: var(--faint); font-size: 10px; }
 .trial {
   background: var(--panel); border: 1px solid var(--line); border-radius: 3px;
   border-left: 3px solid var(--c-other); overflow: hidden;
@@ -472,7 +407,7 @@ textarea { resize: vertical; line-height: 1.45; }
 .trial-meta { font-size: 11px; color: var(--faint); margin-top: 8px; }
 
 .caveat {
-  margin-top: 12px; padding-top: 16px; border-top: 1px solid var(--line);
+  margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line);
   color: var(--muted); font-size: 12px; line-height: 1.65;
 }
 

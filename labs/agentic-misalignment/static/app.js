@@ -647,6 +647,8 @@ function resetResults() {
   $("comparison").hidden = true;
   $("transcripts").innerHTML = "";
   $("progress-label").textContent = "";
+  $("progress-label").classList.remove("is-running");
+  stopProgressDots();
 }
 
 function fullRender(st) {
@@ -659,9 +661,50 @@ function fullRender(st) {
 function updateProgress(st) {
   const p = st.progress || { done: 0, total: 0 };
   if (p.total) {
-    const status = st.status === "running" ? "running" : st.status;
-    $("progress-label").textContent = `${p.done}/${p.total} · ${status}`;
+    const isRunning = st.status === "running";
+    const status = isRunning ? "running" : st.status;
+    $("progress-label").classList.toggle("is-running", isRunning);
+    if (isRunning) {
+      startProgressDots(p.done, p.total);
+    } else {
+      stopProgressDots();
+      $("progress-label").textContent = `${p.done}/${p.total} · ${status}`;
+    }
+  } else {
+    stopProgressDots();
   }
+}
+
+let progressDotsTimer = null;
+let progressDotsCount = 0;
+let progressDone = 0;
+let progressTotal = 0;
+function startProgressDots(done, total) {
+  progressDone = done;
+  progressTotal = total;
+  if (progressDotsTimer) return;
+  progressDotsCount = 0;
+  progressDotsTimer = setInterval(() => {
+    const el = $("progress-label");
+    if (!el || !el.classList.contains("is-running")) {
+      stopProgressDots();
+      return;
+    }
+    const remaining = progressTotal - progressDone;
+    progressDotsCount++;
+    if (progressDotsCount > remaining) progressDotsCount = 0;
+    const bar = "█".repeat(progressDone) + "▓".repeat(progressDotsCount) + "░".repeat(remaining - progressDotsCount);
+    el.textContent = `${progressDone}/${progressTotal} · running ${bar}`;
+  }, 300);
+}
+function stopProgressDots() {
+  if (progressDotsTimer) {
+    clearInterval(progressDotsTimer);
+    progressDotsTimer = null;
+  }
+  progressDotsCount = 0;
+  progressDone = 0;
+  progressTotal = 0;
 }
 
 function appendNewTrials(st) {
