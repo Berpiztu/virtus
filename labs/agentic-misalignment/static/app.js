@@ -89,7 +89,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   } catch (e) { /* leave textareas empty */ }
 
   // Restore form fields from the snapshot now that providers are loaded.
-  restoreConfigFromStatus(st);
+  await restoreConfigFromStatus(st);
   updateDownloadButton(st);
   if (st && st.status === "running") { startPolling(); setRunning(true); }
   else if (st && st.trials && st.trials.length) { fullRender(st); }
@@ -97,7 +97,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
 // Restore form fields (provider, model, max_tokens, etc.) from a running/finished
 // experiment snapshot so a page refresh keeps the user's last configuration.
-function restoreConfigFromStatus(st) {
+async function restoreConfigFromStatus(st) {
   const cfg = st && st.config;
   if (!cfg) return;
 
@@ -106,13 +106,22 @@ function restoreConfigFromStatus(st) {
     for (const [name, p] of providerConfigs) {
       if (p && p.base_url === cfg.base_url) {
         $("provider").value = name;
+        if (p.api_key) $("api_key").value = p.api_key;
         break;
       }
     }
     $("base_url").value = cfg.base_url;
   }
 
-  // Model + max_tokens: set directly without triggering a model-list reload.
+  // Reload the model list for the restored endpoint so the combo dropdown
+  // shows models from the right provider (not the default one).
+  if (cfg.base_url) {
+    // refreshModels is async and will reset the model input; we restore it
+    // after it completes.
+    await refreshModels();
+  }
+
+  // Model + max_tokens: set directly after the model list has been reloaded.
   if (cfg.model) {
     const input = $("model");
     input.value = cfg.model;
