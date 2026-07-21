@@ -1,0 +1,34 @@
+PROVIDERS=OLLAMA,OPENROUTER,LM,MINIMAX,OPENCODE_GO,XAI,ANTHROPIC,NVIDIA,OPENAI,XAI_OAUTH,ANTHROPIC_OAUTH
+ANTHROPIC_OAUTH_BASE_URL=https://api.anthropic.com/v1
+ANTHROPIC_OAUTH_API_KEY=
+XAI_OAUTH_BASE_URL=https://api.x.ai/v1
+XAI_OAUTH_API_KEY=
+
+OLLAMA_BASE_URL=https://ollama.com/v1
+OLLAMA_API_KEY=
+
+OPENROUTER_API_KEY=
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+
+LM_BASE_URL=http://127.0.0.1:1234/v1
+LM_API_KEY=
+
+MINIMAX_API_KEY=
+MINIMAX_BASE_URL=https://api.minimax.io/v1  # Override default base URL
+
+
+OPENCODE_GO_API_KEY=
+OPENCODE_GO_BASE_URL=https://opencode.ai/zen/go/v1  # Override default base URL
+
+XAI_API_KEY=
+XAI_BASE_URL=https://api.x.ai/v1
+
+#ANTHROPIC_TOKEN=sk-ant-oat01-x8Tfyt7aHPzfj5gAYPeH5tzF-t070Y_zYmWBSpV9xM1OFBjtvC08v9DjiaKNKb9jO>
+ANTHROPIC_API_KEY=
+ANTHROPIC_BASE_URL=https://api.anthropic.com
+
+NVIDIA_API_KEY=
+NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
+
+OPENAI_API_KEY=
+OPENAI_BASE_URL=https://api.openai.com/v1
