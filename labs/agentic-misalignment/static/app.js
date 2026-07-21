@@ -75,6 +75,12 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
   $("judge_model").addEventListener("input", updateModelLimitHint);
 
+  // Fetch the running/last experiment snapshot early so we can restore the
+  // user's form values after the provider list is initialized.
+  let st = null;
+  try { st = await (await fetch("/api/status")).json(); } catch (e) { /* ignore */ }
+  latestStatus = st;
+
   await initializeProviders();
   try {
     const s = await (await fetch("/api/scenario")).json();
@@ -82,13 +88,50 @@ window.addEventListener("DOMContentLoaded", async () => {
     $("user_prompt").value = s.user_prompt || "";
   } catch (e) { /* leave textareas empty */ }
 
-  // resume view if an experiment is already running server-side
-  const st = await (await fetch("/api/status")).json();
-  latestStatus = st;
+  // Restore form fields from the snapshot now that providers are loaded.
+  restoreConfigFromStatus(st);
   updateDownloadButton(st);
-  if (st.status === "running") { startPolling(); setRunning(true); }
-  else if (st.trials && st.trials.length) { fullRender(st); }
+  if (st && st.status === "running") { startPolling(); setRunning(true); }
+  else if (st && st.trials && st.trials.length) { fullRender(st); }
 });
+
+// Restore form fields (provider, model, max_tokens, etc.) from a running/finished
+// experiment snapshot so a page refresh keeps the user's last configuration.
+function restoreConfigFromStatus(st) {
+  const cfg = st && st.config;
+  if (!cfg) return;
+
+  // Provider: match by base_url if possible, else leave as-is.
+  if (cfg.base_url) {
+    for (const [name, p] of providerConfigs) {
+      if (p && p.base_url === cfg.base_url) {
+        $("provider").value = name;
+        break;
+      }
+    }
+    $("base_url").value = cfg.base_url;
+  }
+
+  // Model + max_tokens: set directly without triggering a model-list reload.
+  if (cfg.model) {
+    const input = $("model");
+    input.value = cfg.model;
+    if (cfg.max_tokens) {
+      input.dataset.maxTokens = String(cfg.max_tokens + RESERVED_TOKENS);
+    }
+    updateComboClear();
+    updateModelLimitHint();
+  }
+
+  if (cfg.judge_model != null) $("judge_model").value = cfg.judge_model;
+  if (cfg.n_runs != null) $("n_runs").value = cfg.n_runs;
+  if (cfg.temperature != null) $("temperature").value = cfg.temperature;
+
+  if (Array.isArray(cfg.conditions)) {
+    $("cond_baseline").checked = cfg.conditions.includes("baseline");
+    $("cond_virtus").checked = cfg.conditions.includes("virtus");
+  }
+}
 
 // ---------- connection test ----------
 async function ping() {
