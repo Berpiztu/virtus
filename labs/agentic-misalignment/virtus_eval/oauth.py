@@ -47,6 +47,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import requests as _requests
+
 logger = logging.getLogger(__name__)
 
 
@@ -105,6 +107,7 @@ class Provider:
     scopes: str
     api_base_url: str = ""
     flow: str = "pkce"
+    device_code_url: str = ""
     use_pkce: bool = True
     code_challenge_method: str = "S256"
     token_exchange_content_type: str = "application/x-www-form-urlencoded"
@@ -137,6 +140,7 @@ _XAI = Provider(
     client_id=os.getenv("XAI_OAUTH_CLIENT_ID", "b1a00492-073a-47ea-816f-4c329264a828").strip(),
     authorize_url="https://accounts.x.ai/oauth2/device",
     token_url="https://auth.x.ai/oauth2/token",
+    device_code_url="https://auth.x.ai/oauth2/device/code",
     redirect_uri="",
     scopes=os.getenv("XAI_OAUTH_SCOPES", "openid profile email offline_access grok-cli:access api:access").strip(),
     api_base_url="https://api.x.ai/v1",
@@ -144,16 +148,56 @@ _XAI = Provider(
     token_exchange_content_type="application/x-www-form-urlencoded",
 )
 
+# MiniMax — OAuth browser flow (PKCE device-code variant, same as Hermes minimax-oauth).
+# Uses MiniMax portal endpoints: POST /oauth/code for user_code, poll /oauth/token.
+# Inference goes through the Anthropic Messages-compatible endpoint at /anthropic.
+_MINIMAX = Provider(
+    id="minimax",
+    label="MiniMax (OAuth)",
+    client_id=os.getenv("MINIMAX_OAUTH_CLIENT_ID", "78257093-7e40-4613-99e0-527b14b39113").strip(),
+    authorize_url="https://api.minimax.io/oauth/code",
+    token_url="https://api.minimax.io/oauth/token",
+    redirect_uri="",
+    scopes=os.getenv("MINIMAX_OAUTH_SCOPES", "group_id profile model.completion").strip(),
+    api_base_url="https://api.minimax.io/anthropic",
+    flow="minimax_device_code",
+    token_exchange_content_type="application/x-www-form-urlencoded",
+)
+
+# OpenAI Codex — OAuth device-code flow via ChatGPT (same as Hermes openai-codex).
+# Uses auth.openai.com for device code + token exchange.
+# Inference goes through chatgpt.com/backend-api/codex (Responses API).
+_OPENAI_CODEX = Provider(
+    id="openai_codex",
+    label="OpenAI Codex (ChatGPT)",
+    client_id=os.getenv("OPENAI_CODEX_OAUTH_CLIENT_ID", "app_EMoamEEZ73f0CkXaXp7hrann").strip(),
+    authorize_url="https://auth.openai.com/device/code",
+    token_url="https://auth.openai.com/oauth/token",
+    device_code_url="https://auth.openai.com/device/code",
+    redirect_uri="",
+    scopes=os.getenv("OPENAI_CODEX_OAUTH_SCOPES", "openid profile email offline_access").strip(),
+    api_base_url="https://chatgpt.com/backend-api/codex",
+    flow="device_code",
+    token_exchange_content_type="application/x-www-form-urlencoded",
+    user_agent="codex-cli/1.0.2504181",
+)
+
 # Registry — append new providers here.
 PROVIDERS: Dict[str, Provider] = {
     _ANTHROPIC.id: _ANTHROPIC,
     _XAI.id: _XAI,
+    _MINIMAX.id: _MINIMAX,
+    _OPENAI_CODEX.id: _OPENAI_CODEX,
 }
 
 
 def _provider_enabled(provider: Provider) -> bool:
     """Return True when provider has the minimum config required for OAuth."""
     if provider.id == "xai":
+        return bool(provider.client_id)
+    if provider.id == "minimax":
+        return bool(provider.client_id)
+    if provider.id == "openai_codex":
         return bool(provider.client_id)
     return True
 
@@ -388,83 +432,67 @@ def request_device_code(provider: Provider) -> Dict[str, Any]:
     if provider.flow != "device_code":
         raise OAuthError(f"{provider.id} does not use device code flow.")
 
-    payload = urllib.parse.urlencode({
-        "client_id": provider.client_id,
-        "scope": provider.scopes,
-    }).encode()
-    req = urllib.request.Request(
-        "https://auth.x.ai/oauth2/device/code",
-        data=payload,
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": provider.user_agent,
-        },
-        method="POST",
-    )
+    # Use device_code_url for the request; fall back to authorize_url.
+    device_url = provider.device_code_url or provider.authorize_url
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            result = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as exc:
-        body = ""
-        try:
-            body = exc.read().decode()
-        except Exception:
-            pass
-        raise OAuthError(f"{provider.id} device-code request failed ({exc.code}): {body or exc.reason}")
+        resp = _requests.post(
+            device_url,
+            data={"client_id": provider.client_id, "scope": provider.scopes},
+            headers={"User-Agent": provider.user_agent},
+            timeout=20,
+        )
     except Exception as exc:
         raise OAuthError(f"{provider.id} device-code request failed: {exc}")
 
+    if resp.status_code != 200:
+        raise OAuthError(f"{provider.id} device-code request failed ({resp.status_code}): {resp.text[:400]}")
+
+    result = resp.json()
     device_code = str(result.get("device_code") or "").strip()
     if not device_code:
         raise OAuthError(f"{provider.id} device-code response missing device_code")
+    # If the response doesn't include verification_uri, use the provider's authorize_url.
+    if not result.get("verification_uri"):
+        result["verification_uri"] = provider.authorize_url
     return result
 
 
 def exchange_device_code(provider: Provider, device_code: str) -> Dict[str, Any]:
-    """Poll token endpoint for a device_code (xAI device auth flow)."""
+    """Poll token endpoint for a device_code (xAI/Codex device auth flow)."""
     if provider.flow != "device_code":
         raise OAuthError(f"{provider.id} does not use device code flow.")
     if not device_code:
         raise OAuthError("device_code is required")
 
-    payload = urllib.parse.urlencode({
-        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-        "device_code": device_code,
-        "client_id": provider.client_id,
-    }).encode()
-    req = urllib.request.Request(
-        provider.token_url,
-        data=payload,
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": provider.user_agent,
-        },
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            result = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as exc:
-        body = ""
+        resp = _requests.post(
+            provider.token_url,
+            data={
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                "device_code": device_code,
+                "client_id": provider.client_id,
+            },
+            headers={"User-Agent": provider.user_agent},
+            timeout=20,
+        )
+    except Exception as exc:
+        raise OAuthError(f"{provider.id} token request failed: {exc}")
+
+    if resp.status_code != 200:
+        body = resp.text[:400]
+        parsed = {}
         try:
-            body = exc.read().decode()
+            parsed = resp.json()
         except Exception:
             pass
-        parsed = {}
-        if body:
-            try:
-                parsed = json.loads(body)
-            except Exception:
-                parsed = {}
         err = str(parsed.get("error") or "").strip().lower()
         if err in {"authorization_pending", "slow_down"}:
             raise OAuthPendingError(
                 "Authorization pending. Complete sign-in in your browser, then click Exchange again."
             )
-        raise OAuthError(f"{provider.id} token request failed ({exc.code}): {body or exc.reason}")
-    except Exception as exc:
-        raise OAuthError(f"{provider.id} token request failed: {exc}")
+        raise OAuthError(f"{provider.id} token request failed ({resp.status_code}): {body}")
 
+    result = resp.json()
     if not result.get("access_token"):
         raise OAuthError(f"{provider.id} token response missing access_token")
     expires_in = int(result.get("expires_in", 3600))
@@ -474,6 +502,116 @@ def exchange_device_code(provider: Provider, device_code: str) -> Dict[str, Any]
         "expires_at_ms": int(time.time() * 1000) + expires_in * 1000,
         "scopes": provider.scopes,
         "token_type": result.get("token_type", "bearer"),
+    }
+
+
+# ── MiniMax OAuth (PKCE device-code variant) ────────────────────────────
+def request_minimax_device_code(provider: Provider) -> Dict[str, Any]:
+    """Request a user_code from MiniMax's PKCE-based device flow.
+
+    MiniMax uses POST {portal}/oauth/code with client_id + code_challenge + state,
+    returning user_code + verification_uri (not the standard RFC device_code).
+    """
+    if provider.flow != "minimax_device_code":
+        raise OAuthError(f"{provider.id} does not use minimax device code flow.")
+
+    verifier, challenge = generate_pkce()
+    state = secrets.token_urlsafe(24)
+
+    try:
+        resp = _requests.post(
+            provider.authorize_url,
+            data={
+                "client_id": provider.client_id,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+                "state": state,
+                "scope": provider.scopes,
+            },
+            headers={"User-Agent": provider.user_agent},
+            timeout=20,
+        )
+    except Exception as exc:
+        raise OAuthError(f"{provider.id} device-code request failed: {exc}")
+
+    if resp.status_code != 200:
+        raise OAuthError(f"{provider.id} device-code request failed ({resp.status_code}): {resp.text[:400]}")
+
+    result = resp.json()
+    user_code = str(result.get("user_code") or "").strip()
+    verification_uri = str(result.get("verification_uri") or "").strip()
+    if not user_code or not verification_uri:
+        raise OAuthError(f"{provider.id} device-code response missing user_code or verification_uri")
+
+    result["_verifier"] = verifier
+    result["_state"] = state
+    return result
+
+
+def poll_minimax_token(provider: Provider, verifier: str, state: str, user_code: str = "") -> Dict[str, Any]:
+    """Poll MiniMax token endpoint using device_code grant type.
+
+    MiniMax uses standard OAuth device-code grant: POST {portal}/oauth/token with
+    grant_type=urn:ietf:params:oauth:grant-type:device_code, client_id, device_code.
+    The device_code is the user_code from the /oauth/code response.
+    Response: {"status": "pending"} or {"status": "success", "access_token": ...}.
+    """
+    if provider.flow != "minimax_device_code":
+        raise OAuthError(f"{provider.id} does not use minimax device code flow.")
+
+    if not user_code:
+        raise OAuthError(f"{provider.id} user_code is required for polling")
+
+    try:
+        resp = _requests.post(
+            provider.token_url,
+            data={
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                "client_id": provider.client_id,
+                "device_code": user_code,
+                "code_verifier": verifier,
+            },
+            headers={"User-Agent": provider.user_agent},
+            timeout=20,
+        )
+    except Exception as exc:
+        raise OAuthError(f"{provider.id} token request failed: {exc}")
+
+    if resp.status_code != 200:
+        raise OAuthError(f"{provider.id} token request failed ({resp.status_code}): {resp.text[:400]}")
+
+    result = resp.json()
+
+    # MiniMax response uses "status" field: "pending" or "success"
+    status = str(result.get("status") or "").strip().lower()
+    if status == "pending":
+        raise OAuthPendingError(
+            "Authorization pending. Complete sign-in in your browser, then click Exchange again."
+        )
+    if status == "error":
+        raise OAuthError(f"{provider.id} authorization denied: {result}")
+
+    if not result.get("access_token"):
+        raise OAuthError(f"{provider.id} token response missing access_token: {resp.text[:400]}")
+
+    # MiniMax uses "expired_in" (seconds or absolute ms)
+    expired_in = result.get("expired_in", 3600)
+    try:
+        expired_in_int = int(expired_in)
+    except (TypeError, ValueError):
+        expired_in_int = 3600
+    # If it's an absolute timestamp in ms (> 1e12), convert to relative seconds
+    if expired_in_int > 1_000_000_000_000:
+        expires_in = max(60, int((expired_in_int - time.time() * 1000) / 1000))
+    else:
+        expires_in = expired_in_int
+
+    return {
+        "access_token": result["access_token"],
+        "refresh_token": result.get("refresh_token", ""),
+        "expires_at_ms": int(time.time() * 1000) + expires_in * 1000,
+        "scopes": provider.scopes,
+        "token_type": result.get("token_type", "Bearer"),
     }
 
 

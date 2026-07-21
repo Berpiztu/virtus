@@ -142,11 +142,36 @@ def start():
             "ok": True,
             "provider": provider.id,
             "flow": "device_code",
-            "verification_uri": data.get("verification_uri") or "https://accounts.x.ai/oauth2/device",
+            "verification_uri": data.get("verification_uri") or provider.authorize_url,
             "verification_uri_complete": data.get("verification_uri_complete") or "",
             "user_code": data.get("user_code") or "",
             "interval": int(data.get("interval") or 5),
             "expires_in": int(data.get("expires_in") or 1800),
+            "scopes": provider.scopes,
+        })
+
+    if provider.flow == "minimax_device_code":
+        try:
+            data = oauth.request_minimax_device_code(provider)
+        except oauth.OAuthError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
+        _oauth_state[provider.id] = {
+            "flow": "minimax_device_code",
+            "verifier": data.get("_verifier") or "",
+            "state": data.get("_state") or "",
+            "user_code": data.get("user_code") or "",
+            "expires_in": int(data.get("expired_in") or 600),
+        }
+        return jsonify({
+            "ok": True,
+            "provider": provider.id,
+            "flow": "device_code",
+            "verification_uri": data.get("verification_uri") or provider.authorize_url,
+            "verification_uri_complete": data.get("verification_uri_complete") or "",
+            "user_code": data.get("user_code") or "",
+            "interval": int(data.get("interval") or 5),
+            "expires_in": int(data.get("expired_in") or 600),
             "scopes": provider.scopes,
         })
 
@@ -196,6 +221,22 @@ def exchange():
         except oauth.OAuthError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
         _oauth_state.pop(provider.id, None)
+    elif flow == "minimax_device_code":
+        verifier = str(state_blob.get("verifier") or "")
+        mm_state = str(state_blob.get("state") or "")
+        user_code = str(state_blob.get("user_code") or "")
+        _oauth_state.pop(provider.id, None)
+        if not verifier:
+            return jsonify({
+                "ok": False,
+                "error": "No PKCE verifier in memory for this provider. Start a new authorization.",
+            }), 400
+        try:
+            creds = oauth.poll_minimax_token(provider, verifier, mm_state, user_code)
+        except oauth.OAuthPendingError as exc:
+            return jsonify({"ok": False, "pending": True, "error": str(exc)}), 200
+        except oauth.OAuthError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
     else:
         raw = (body.get("code") or "").strip()
         if not raw:

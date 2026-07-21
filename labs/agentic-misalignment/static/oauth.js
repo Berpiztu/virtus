@@ -105,7 +105,11 @@
     el("oauth-close").addEventListener("click", close);
     el("oauth-provider").addEventListener("change", () => {
       VirtusOAuth.state.provider = el("oauth-provider").value;
+      VirtusOAuth.state.currentFlow = null;
+      el("oauth-url").textContent = "";
+      el("oauth-code").value = "";
       hideStep();
+      showError("");
       refreshStatus();
     });
     el("oauth-start").addEventListener("click", startAuth);
@@ -262,8 +266,18 @@
       showError(data.error || "Authorization pending. Complete sign-in in browser and try again.");
       return;
     }
-    if (!ok || !data.ok) { showError(data.error || "Token exchange failed."); return; }
+    // Clean up URL and code fields regardless of success or failure.
+    el("oauth-url").textContent = "";
+    el("oauth-code").value = "";
+    VirtusOAuth.state.currentFlow = null;
+    if (!ok || !data.ok) {
+      hideStep();
+      showError(data.error || "Token exchange failed.");
+      refreshStatus();
+      return;
+    }
     hideStep();
+    showError("");
     renderStatus(data);
     refreshAppProviders();
   }

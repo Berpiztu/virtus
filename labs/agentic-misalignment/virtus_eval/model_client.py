@@ -189,10 +189,26 @@ def _request_json(method: str, url: str, *, headers: dict, payload: dict | None 
 
 def _is_anthropic_base_url(base_url: str) -> bool:
     try:
-        host = urlparse(base_url).netloc.lower()
+        parsed = urlparse(base_url)
+        host = parsed.netloc.lower()
+        path = (parsed.path or "").rstrip("/").lower()
     except ValueError:
         return False
-    return host == "api.anthropic.com"
+    # Native Anthropic endpoint
+    if host == "api.anthropic.com":
+        return True
+    # Third-party Anthropic-compatible endpoints (MiniMax, etc.) use /anthropic suffix
+    if path.endswith("/anthropic"):
+        return True
+    return False
+
+
+def _is_native_anthropic(base_url: str) -> bool:
+    """Return True only for api.anthropic.com (not third-party /anthropic)."""
+    try:
+        return urlparse(base_url).netloc.lower() == "api.anthropic.com"
+    except ValueError:
+        return False
 
 
 def _is_xai_base_url(base_url: str) -> bool:
@@ -366,9 +382,15 @@ def _anthropic_api_base(base_url: str) -> str:
 def _provider_headers(api_key: str, *, base_url: str | None = None) -> dict:
     headers = {"Content-Type": "application/json"}
     if base_url and _is_anthropic_base_url(base_url):
+        # Check if this is a third-party /anthropic endpoint (MiniMax, etc.)
+        # that requires Bearer auth instead of Anthropic's native x-api-key.
+        is_third_party = not _is_native_anthropic(base_url)
         headers["anthropic-version"] = "2023-06-01"
         if api_key:
-            if _is_oauth_token(api_key):
+            if is_third_party:
+                # MiniMax and other third-party /anthropic endpoints use Bearer auth
+                headers["Authorization"] = f"Bearer {api_key}"
+            elif _is_oauth_token(api_key):
                 # OAuth access token / setup-token → Bearer auth + Claude Code
                 # identity betas. Without these, Anthropic's infra 500s OAuth
                 # traffic. Mirrors providers/anthropic_adapter.py.
@@ -528,6 +550,12 @@ def list_models_with_metadata(
     if base_url == "mock":
         return []
 
+    # MiniMax /anthropic endpoint doesn't support /models — convert to /v1
+    # for model listing (same as Hermes' _to_openai_base_url).
+    models_base_url = base_url
+    if base_url.rstrip("/").endswith("/anthropic"):
+        models_base_url = base_url.rstrip("/")[:-len("/anthropic")] + "/v1"
+
     cache_key = (base_url.rstrip("/"), api_key)
     now = time.monotonic()
     with _MODEL_LIST_CACHE_LOCK:
@@ -537,7 +565,7 @@ def list_models_with_metadata(
 
     if _is_anthropic_base_url(base_url):
         headers = _provider_headers(api_key, base_url=base_url)
-        data = _request_json("GET", _anthropic_api_base(base_url) + "/models", headers=headers, timeout=timeout)
+        data = _request_json("GET", _anthropic_api_base(models_base_url) + "/models", headers=headers, timeout=timeout)
         models = []
         for item in data.get("data", []):
             if not isinstance(item, dict):
@@ -560,8 +588,33 @@ def list_models_with_metadata(
             _MODEL_LIST_CACHE[cache_key] = (now, models)
         return [dict(item) for item in models]
 
-    headers = _provider_headers(api_key, base_url=base_url)
-    base = base_url.rstrip("/")
+    # MiniMax /anthropic or other /anthropic-suffixed endpoints: use /v1 for model listing
+    if models_base_url != base_url:
+        headers = _provider_headers(api_key, base_url=models_base_url)
+        base = models_base_url.rstrip("/")
+        urls = [base + "/models"]
+        try:
+            data = _request_json("GET", urls[0], headers=headers, timeout=timeout)
+        except ModelError as e:
+            raise
+        if isinstance(data, dict):
+            models = []
+            for item in data.get("data", []):
+                if isinstance(item, dict):
+                    name = item.get("id") or item.get("name")
+                    if name:
+                        models.append({
+                            "name": str(name),
+                            "max_tokens": _int_or_default(item.get("max_tokens")),
+                            "context_length": _int_or_default(item.get("max_input_tokens") or item.get("context_length")),
+                        })
+            if models:
+                with _MODEL_LIST_CACHE_LOCK:
+                    _MODEL_LIST_CACHE[cache_key] = (now, models)
+                return [dict(item) for item in models]
+
+    headers = _provider_headers(api_key, base_url=models_base_url)
+    base = models_base_url.rstrip("/")
     urls = [base + "/models"]
     if base.endswith("/v1"):
         urls.append(base[:-3] + "/api/tags")
