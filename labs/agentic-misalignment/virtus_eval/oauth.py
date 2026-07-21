@@ -171,15 +171,15 @@ _OPENAI_CODEX = Provider(
     id="openai_codex",
     label="OpenAI Codex (ChatGPT)",
     client_id=os.getenv("OPENAI_CODEX_OAUTH_CLIENT_ID", "app_EMoamEEZ73f0CkXaXp7hrann").strip(),
-    authorize_url="https://auth.openai.com/device/code",
+    authorize_url="https://chatgpt.com/backend-api/codex/deviceauth",
     token_url="https://auth.openai.com/oauth/token",
-    device_code_url="https://auth.openai.com/device/code",
+    device_code_url="https://chatgpt.com/backend-api/codex/deviceauth/usercode",
     redirect_uri="",
     scopes=os.getenv("OPENAI_CODEX_OAUTH_SCOPES", "openid profile email offline_access").strip(),
     api_base_url="https://chatgpt.com/backend-api/codex",
-    flow="device_code",
+    flow="codex_device_code",
     token_exchange_content_type="application/x-www-form-urlencoded",
-    user_agent="codex-cli/1.0.2504181",
+    user_agent="codex_cli_rs/1.0.2504181",
 )
 
 # Registry — append new providers here.
@@ -197,8 +197,9 @@ def _provider_enabled(provider: Provider) -> bool:
         return bool(provider.client_id)
     if provider.id == "minimax":
         return bool(provider.client_id)
+    # OpenAI Codex OAuth — disabled for now (endpoint not publicly accessible).
     if provider.id == "openai_codex":
-        return bool(provider.client_id)
+        return False
     return True
 
 
@@ -434,11 +435,18 @@ def request_device_code(provider: Provider) -> Dict[str, Any]:
 
     # Use device_code_url for the request; fall back to authorize_url.
     device_url = provider.device_code_url or provider.authorize_url
+
+    # Codex/OpenAI sits behind Cloudflare that whitelists codex_cli_rs originator.
+    headers = {"User-Agent": provider.user_agent}
+    if provider.id == "openai_codex":
+        headers["originator"] = "codex_cli_rs"
+        headers["User-Agent"] = "codex_cli_rs/1.0.2504181"
+
     try:
         resp = _requests.post(
             device_url,
             data={"client_id": provider.client_id, "scope": provider.scopes},
-            headers={"User-Agent": provider.user_agent},
+            headers=headers,
             timeout=20,
         )
     except Exception as exc:
@@ -464,6 +472,11 @@ def exchange_device_code(provider: Provider, device_code: str) -> Dict[str, Any]
     if not device_code:
         raise OAuthError("device_code is required")
 
+    headers = {"User-Agent": provider.user_agent}
+    if provider.id == "openai_codex":
+        headers["originator"] = "codex_cli_rs"
+        headers["User-Agent"] = "codex_cli_rs/1.0.2504181"
+
     try:
         resp = _requests.post(
             provider.token_url,
@@ -472,7 +485,7 @@ def exchange_device_code(provider: Provider, device_code: str) -> Dict[str, Any]
                 "device_code": device_code,
                 "client_id": provider.client_id,
             },
-            headers={"User-Agent": provider.user_agent},
+            headers=headers,
             timeout=20,
         )
     except Exception as exc:
@@ -502,6 +515,105 @@ def exchange_device_code(provider: Provider, device_code: str) -> Dict[str, Any]
         "expires_at_ms": int(time.time() * 1000) + expires_in * 1000,
         "scopes": provider.scopes,
         "token_type": result.get("token_type", "bearer"),
+    }
+
+
+# ── OpenAI Codex OAuth (3-step device flow via chatgpt.com) ────────────
+def request_codex_device_code(provider: Provider) -> Dict[str, Any]:
+    """Step 1: POST /deviceauth/usercode → device_auth_id + user_code."""
+    if provider.flow != "codex_device_code":
+        raise OAuthError(f"{provider.id} does not use codex device code flow.")
+
+    headers = {
+        "originator": "codex_cli_rs",
+        "User-Agent": "codex_cli_rs/1.0.2504181",
+        "Content-Type": "application/json",
+    }
+    try:
+        resp = _requests.post(
+            provider.device_code_url,
+            json={"client_id": provider.client_id},
+            headers=headers,
+            timeout=20,
+        )
+    except Exception as exc:
+        raise OAuthError(f"{provider.id} device-code request failed: {exc}")
+
+    if resp.status_code != 200:
+        raise OAuthError(f"{provider.id} device-code request failed ({resp.status_code}): {resp.text[:400]}")
+
+    result = resp.json()
+    if not result.get("device_auth_id"):
+        raise OAuthError(f"{provider.id} device-code response missing device_auth_id")
+    return result
+
+
+def poll_codex_device_token(provider: Provider, device_auth_id: str) -> Dict[str, Any]:
+    """Step 2: POST /deviceauth/token → authorization_code + code_verifier."""
+    if provider.flow != "codex_device_code":
+        raise OAuthError(f"{provider.id} does not use codex device code flow.")
+
+    headers = {
+        "originator": "codex_cli_rs",
+        "User-Agent": "codex_cli_rs/1.0.2504181",
+        "Content-Type": "application/json",
+    }
+    token_poll_url = provider.authorize_url + "/token"
+    try:
+        resp = _requests.post(
+            token_poll_url,
+            json={"device_auth_id": device_auth_id},
+            headers=headers,
+            timeout=20,
+        )
+    except Exception as exc:
+        raise OAuthError(f"{provider.id} token poll failed: {exc}")
+
+    if resp.status_code != 200:
+        raise OAuthError(f"{provider.id} token poll failed ({resp.status_code}): {resp.text[:400]}")
+
+    result = resp.json()
+    if not result.get("authorization_code"):
+        raise OAuthPendingError("Authorization pending. Complete sign-in in your browser, then click Exchange again.")
+    return result
+
+
+def exchange_codex_token(provider: Provider, authorization_code: str, code_verifier: str) -> Dict[str, Any]:
+    """Step 3: POST auth.openai.com/oauth/token → access_token + refresh_token."""
+    headers = {
+        "originator": "codex_cli_rs",
+        "User-Agent": "codex_cli_rs/1.0.2504181",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+    try:
+        resp = _requests.post(
+            provider.token_url,
+            data={
+                "grant_type": "authorization_code",
+                "code": authorization_code,
+                "code_verifier": code_verifier,
+                "client_id": provider.client_id,
+                "redirect_uri": "https://chatgpt.com/backend-api/codex/auth/callback",
+            },
+            headers=headers,
+            timeout=20,
+        )
+    except Exception as exc:
+        raise OAuthError(f"{provider.id} token exchange failed: {exc}")
+
+    if resp.status_code != 200:
+        raise OAuthError(f"{provider.id} token exchange failed ({resp.status_code}): {resp.text[:400]}")
+
+    result = resp.json()
+    if not result.get("access_token"):
+        raise OAuthError(f"{provider.id} token response missing access_token")
+    expires_in = int(result.get("expires_in", 3600))
+    return {
+        "access_token": result["access_token"],
+        "refresh_token": result.get("refresh_token", ""),
+        "expires_at_ms": int(time.time() * 1000) + expires_in * 1000,
+        "scopes": provider.scopes,
+        "token_type": result.get("token_type", "Bearer"),
     }
 
 

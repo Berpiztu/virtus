@@ -150,6 +150,30 @@ def start():
             "scopes": provider.scopes,
         })
 
+    if provider.flow == "codex_device_code":
+        try:
+            data = oauth.request_codex_device_code(provider)
+        except oauth.OAuthError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
+        _oauth_state[provider.id] = {
+            "flow": "codex_device_code",
+            "device_auth_id": str(data.get("device_auth_id") or "").strip(),
+            "interval": int(data.get("interval") or 5),
+            "expires_in": int(data.get("expires_in") or 600),
+        }
+        return jsonify({
+            "ok": True,
+            "provider": provider.id,
+            "flow": "device_code",
+            "verification_uri": "https://chatgpt.com/device",
+            "verification_uri_complete": data.get("verification_uri_complete") or "",
+            "user_code": data.get("user_code") or "",
+            "interval": int(data.get("interval") or 5),
+            "expires_in": int(data.get("expires_in") or 600),
+            "scopes": provider.scopes,
+        })
+
     if provider.flow == "minimax_device_code":
         try:
             data = oauth.request_minimax_device_code(provider)
@@ -221,6 +245,28 @@ def exchange():
         except oauth.OAuthError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
         _oauth_state.pop(provider.id, None)
+    elif flow == "codex_device_code":
+        device_auth_id = str(state_blob.get("device_auth_id") or "").strip()
+        if not device_auth_id:
+            return jsonify({
+                "ok": False,
+                "error": "No device auth id in memory for this provider. Start a new authorization.",
+            }), 400
+        # Step 2: poll for authorization_code
+        try:
+            poll_result = oauth.poll_codex_device_token(provider, device_auth_id)
+        except oauth.OAuthPendingError as exc:
+            return jsonify({"ok": False, "pending": True, "error": str(exc)}), 200
+        except oauth.OAuthError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        # Step 3: exchange authorization_code for access_token
+        auth_code = poll_result.get("authorization_code", "")
+        code_verifier = poll_result.get("code_verifier", "")
+        _oauth_state.pop(provider.id, None)
+        try:
+            creds = oauth.exchange_codex_token(provider, auth_code, code_verifier)
+        except oauth.OAuthError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
     elif flow == "minimax_device_code":
         verifier = str(state_blob.get("verifier") or "")
         mm_state = str(state_blob.get("state") or "")
