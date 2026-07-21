@@ -20,7 +20,9 @@ it at real weights.
 """
 
 import random
+import threading
 import time
+import json
 from pathlib import Path
 import os
 from urllib.parse import urlparse
@@ -85,10 +87,25 @@ DEFAULT_API_KEY = os.getenv("OPENAI_API_KEY", "ollama")
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "mock")
 DEFAULT_MAX_TOKENS = 32000
 MAX_INFERRED_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_TOKENS_CAP", "32000"))
+MODEL_LIST_CACHE_SECONDS = int(os.getenv("MODEL_LIST_CACHE_SECONDS", "300"))
+
+_MODEL_LIST_CACHE: dict[tuple[str, str], tuple[float, list[dict]]] = {}
+_MODEL_LIST_CACHE_LOCK = threading.Lock()
+_THROTTLE_LOCK = threading.Lock()
+_LAST_REQUEST_AT: dict[str, float] = {}
+
+# Gentle client-side pacing to avoid bursty 429s on providers with tight limits.
+ANTHROPIC_MIN_INTERVAL_SECONDS = float(os.getenv("ANTHROPIC_MIN_INTERVAL_SECONDS", "1.2"))
 
 
 def get_configured_providers() -> list[str]:
-    raw = os.getenv("PROVIDERS", _DOTENV_VALUES.get("PROVIDERS", ""))
+    # Read .env on each call so provider list updates immediately when the
+    # file is edited (e.g. OAuth provider added/removed) without requiring a
+    # server restart. If .env has PROVIDERS, treat it as source of truth.
+    live_dotenv = _read_dotenv()
+    dotenv_providers = live_dotenv.get("PROVIDERS", "")
+    env_providers = os.getenv("PROVIDERS", "")
+    raw = dotenv_providers or env_providers
     names = []
     seen = set()
     for item in raw.split(","):
@@ -102,15 +119,17 @@ def get_configured_providers() -> list[str]:
 
 def get_provider_config(name: str) -> dict[str, str]:
     provider = name.strip().upper()
+    live_dotenv = _read_dotenv()
     return {
         "name": provider,
-        "base_url": os.getenv(f"{provider}_BASE_URL", _DOTENV_VALUES.get(f"{provider}_BASE_URL", "")),
-        "api_key": os.getenv(f"{provider}_API_KEY", _DOTENV_VALUES.get(f"{provider}_API_KEY", "")),
+        "base_url": os.getenv(f"{provider}_BASE_URL", live_dotenv.get(f"{provider}_BASE_URL", _DOTENV_VALUES.get(f"{provider}_BASE_URL", ""))),
+        "api_key": os.getenv(f"{provider}_API_KEY", live_dotenv.get(f"{provider}_API_KEY", _DOTENV_VALUES.get(f"{provider}_API_KEY", ""))),
     }
 
 
 def list_provider_configs() -> list[dict[str, str]]:
-    return [get_provider_config(name) for name in get_configured_providers()]
+    configs = [get_provider_config(name) for name in get_configured_providers()]
+    return sorted(configs, key=lambda item: str(item.get("name") or "").upper())
 
 
 def get_default_provider_name() -> str:
@@ -158,11 +177,7 @@ def _extract_message_parts(choice: dict) -> tuple[str, str, str]:
 
 
 def _request_json(method: str, url: str, *, headers: dict, payload: dict | None = None, timeout: int = 60) -> dict:
-    try:
-        resp = requests.request(method, url, json=payload, headers=headers, timeout=timeout)
-    except requests.RequestException as e:
-        raise ModelError(f"Request to {url} failed: {e}") from e
-
+    resp = _request_with_retry(method, url, headers=headers, payload=payload, timeout=timeout)
     if resp.status_code != 200:
         raise ModelError(f"{url} returned {resp.status_code}: {resp.text[:400]}")
 
@@ -180,6 +195,169 @@ def _is_anthropic_base_url(base_url: str) -> bool:
     return host == "api.anthropic.com"
 
 
+def _is_xai_base_url(base_url: str) -> bool:
+    """Return True for xAI's OpenAI-compatible endpoint."""
+    try:
+        host = urlparse(base_url).netloc.lower()
+    except ValueError:
+        return False
+    return host in {"api.x.ai", "api.xai.com"}
+
+
+def _is_oauth_token(api_key: str) -> bool:
+    """Return True if *api_key* looks like an Anthropic OAuth/setup token.
+
+    Mirrors the detection in ``providers/anthropic_adapter.py``:
+    - ``sk-ant-`` prefix (but NOT ``sk-ant-api``) → setup tokens, managed keys
+    - ``eyJ`` prefix → JWTs from the Anthropic OAuth flow
+    """
+    if not api_key:
+        return False
+    if api_key.startswith("sk-ant-api"):
+        return False
+    if api_key.startswith("sk-ant-"):
+        return True
+    if api_key.startswith("eyJ"):
+        return True
+    return False
+
+
+def _is_retryable_status(status_code: int) -> bool:
+    """Return True for transient upstream failures worth retrying."""
+    return status_code in (429, 500, 502, 503, 504)
+
+
+def _retry_delay_seconds(resp: requests.Response, attempt: int) -> float:
+    """Compute retry delay from Retry-After or bounded exponential backoff."""
+    retry_after = (resp.headers.get("Retry-After") or "").strip()
+    if retry_after.isdigit():
+        # Respect provider hints, but cap to keep UI ping responsive.
+        return min(float(int(retry_after)), 8.0)
+    return min(1.0 * (2 ** max(0, attempt - 1)), 12.0)
+
+
+def _throttle_key(url: str) -> str:
+    try:
+        return (urlparse(url).netloc or "").lower()
+    except ValueError:
+        return ""
+
+
+def _throttle_before_request(url: str) -> None:
+    """Apply per-host pacing before sending requests (mainly for Anthropic)."""
+    key = _throttle_key(url)
+    if key != "api.anthropic.com":
+        return
+    min_interval = max(0.0, ANTHROPIC_MIN_INTERVAL_SECONDS)
+    if min_interval <= 0:
+        return
+
+    with _THROTTLE_LOCK:
+        now = time.monotonic()
+        last = _LAST_REQUEST_AT.get(key, 0.0)
+        wait = min_interval - (now - last)
+        if wait > 0:
+            time.sleep(wait)
+            now = time.monotonic()
+        _LAST_REQUEST_AT[key] = now
+
+
+def _format_rate_limit_error(url: str, resp: requests.Response) -> str:
+    """Build a clearer error message for provider rate-limit responses."""
+    request_id = ""
+    err_type = ""
+    err_msg = ""
+    try:
+        parsed = resp.json()
+        if isinstance(parsed, dict):
+            request_id = str(parsed.get("request_id") or "").strip()
+            err = parsed.get("error")
+            if isinstance(err, dict):
+                err_type = str(err.get("type") or "").strip()
+                err_msg = str(err.get("message") or "").strip()
+    except (ValueError, json.JSONDecodeError):
+        pass
+
+    rid = f" request_id={request_id}." if request_id else ""
+    detail = f" type={err_type}." if err_type else ""
+    msg = err_msg or "Rate limit reached"
+    return (
+        f"{url} returned 429:{detail}{rid} {msg}. "
+        "Try waiting 30-60s and retry, reduce run concurrency/throughput, "
+        "or use a model/account with higher limits."
+    )
+
+
+def _is_anthropic_temperature_deprecated(resp: requests.Response) -> bool:
+    """Detect Anthropic 400 responses that reject the temperature parameter."""
+    if resp.status_code != 400:
+        return False
+    try:
+        data = resp.json()
+    except (ValueError, json.JSONDecodeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    err = data.get("error")
+    if not isinstance(err, dict):
+        return False
+    msg = str(err.get("message") or "").strip().lower()
+    return "temperature" in msg and "deprecated" in msg
+
+
+def _request_with_retry(
+    method: str,
+    url: str,
+    *,
+    headers: dict,
+    payload: dict | None = None,
+    timeout: int = 60,
+    max_attempts: int = 5,
+) -> requests.Response:
+    """Perform an HTTP request with small retries for 429/503 responses."""
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            _throttle_before_request(url)
+            resp = requests.request(method, url, json=payload, headers=headers, timeout=timeout)
+        except requests.RequestException as e:
+            last_error = e
+            # Network errors are not retried here — callers should fail fast.
+            break
+
+        if resp.status_code == 200:
+            return resp
+
+        if attempt < max_attempts and _is_retryable_status(resp.status_code):
+            time.sleep(_retry_delay_seconds(resp, attempt))
+            continue
+
+        if resp.status_code == 429:
+            try:
+                # Keep 429 payload available; caller may surface it directly.
+                resp._virtus_rate_limit_message = _format_rate_limit_error(url, resp)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        return resp
+
+    if last_error is not None:
+        raise ModelError(f"Request to {url} failed: {last_error}") from last_error
+
+    # Defensive fallback (should be unreachable in normal flows).
+    raise ModelError(f"Request to {url} failed without response")
+
+
+def _is_ollama_base_url(base_url: str) -> bool:
+    """Return whether the endpoint is expected to expose Ollama's /api/show."""
+    try:
+        parsed = urlparse(base_url)
+        host = (parsed.hostname or "").lower()
+        port = parsed.port
+    except ValueError:
+        return False
+    return host == "ollama.com" or host.endswith(".ollama.com") or port == 11434
+
+
 def _anthropic_api_base(base_url: str) -> str:
     base = base_url.rstrip("/")
     return base if base.endswith("/v1") else base + "/v1"
@@ -190,7 +368,21 @@ def _provider_headers(api_key: str, *, base_url: str | None = None) -> dict:
     if base_url and _is_anthropic_base_url(base_url):
         headers["anthropic-version"] = "2023-06-01"
         if api_key:
-            headers["x-api-key"] = api_key
+            if _is_oauth_token(api_key):
+                # OAuth access token / setup-token → Bearer auth + Claude Code
+                # identity betas. Without these, Anthropic's infra 500s OAuth
+                # traffic. Mirrors providers/anthropic_adapter.py.
+                headers["Authorization"] = f"Bearer {api_key}"
+                headers["anthropic-beta"] = ",".join([
+                    "interleaved-thinking-2025-05-14",
+                    "fine-grained-tool-streaming-2025-05-14",
+                    "claude-code-20250219",
+                    "oauth-2025-04-20",
+                ])
+                headers["user-agent"] = "claude-cli/2.1.74 (external, cli)"
+                headers["x-app"] = "cli"
+            else:
+                headers["x-api-key"] = api_key
         return headers
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -287,7 +479,7 @@ def get_model_max_tokens(base_url: str, model: str, api_key: str = DEFAULT_API_K
             return _int_or_default(info.get("max_tokens"))
         return limit
 
-    if base.endswith("/v1"):
+    if base.endswith("/v1") and _is_ollama_base_url(base_url):
         show_url = base[:-3] + "/api/show"
         try:
             show_data = _request_json("POST", show_url, headers=headers, payload={"model": model}, timeout=timeout)
@@ -316,7 +508,7 @@ def get_model_context_length(base_url: str, model: str, api_key: str = DEFAULT_A
             return _int_or_default(info.get("max_input_tokens"))
         return limit
 
-    if base.endswith("/v1"):
+    if base.endswith("/v1") and _is_ollama_base_url(base_url):
         show_url = base[:-3] + "/api/show"
         try:
             show_data = _request_json("POST", show_url, headers=headers, payload={"model": model}, timeout=timeout)
@@ -335,6 +527,13 @@ def list_models_with_metadata(
     """List available models with any token metadata the provider exposes."""
     if base_url == "mock":
         return []
+
+    cache_key = (base_url.rstrip("/"), api_key)
+    now = time.monotonic()
+    with _MODEL_LIST_CACHE_LOCK:
+        cached = _MODEL_LIST_CACHE.get(cache_key)
+        if cached and now - cached[0] < MODEL_LIST_CACHE_SECONDS:
+            return [dict(item) for item in cached[1]]
 
     if _is_anthropic_base_url(base_url):
         headers = _provider_headers(api_key, base_url=base_url)
@@ -357,7 +556,9 @@ def list_models_with_metadata(
             )
         if not models:
             raise ModelError(f"Could not list models from {base_url}: unexpected response shape")
-        return models
+        with _MODEL_LIST_CACHE_LOCK:
+            _MODEL_LIST_CACHE[cache_key] = (now, models)
+        return [dict(item) for item in models]
 
     headers = _provider_headers(api_key, base_url=base_url)
     base = base_url.rstrip("/")
@@ -366,7 +567,7 @@ def list_models_with_metadata(
         urls.append(base[:-3] + "/api/tags")
 
     last_error = None
-    names = []
+    model_items: dict[str, dict] = {}
     for url in urls:
         try:
             data = _request_json("GET", url, headers=headers, timeout=timeout)
@@ -379,29 +580,53 @@ def list_models_with_metadata(
                 if isinstance(item, dict):
                     name = item.get("id") or item.get("name")
                     if name:
-                        names.append(str(name))
+                        model_items.setdefault(str(name), item)
             for item in data.get("models", []):
                 if isinstance(item, dict):
                     name = item.get("name") or item.get("model")
                     if name:
-                        names.append(str(name))
-        if names:
+                        model_items.setdefault(str(name), item)
+        if model_items:
             break
 
-    deduped = list(dict.fromkeys(name.strip() for name in names if str(name).strip()))
+    normalized_items = {
+        name.strip(): item for name, item in model_items.items() if name.strip()
+    }
+    deduped = list(normalized_items)
     if not deduped:
         if last_error is not None:
             raise last_error
         raise ModelError(f"Could not list models from {base_url}: unexpected response shape")
 
-    return [
-        {
+    models = []
+    for name in deduped:
+        item = normalized_items[name]
+        top_provider = item.get("top_provider") if isinstance(item.get("top_provider"), dict) else {}
+        context_length = item.get("context_length") or top_provider.get("context_length")
+        max_tokens = (
+            item.get("max_completion_tokens")
+            or item.get("max_output_tokens")
+            or item.get("max_tokens")
+            or top_provider.get("max_completion_tokens")
+        )
+
+        # Ollama's list response omits context metadata, so enrich it via /api/show.
+        # Hosted OpenAI-compatible providers (especially OpenRouter) may expose
+        # hundreds of models; never issue one or two extra requests per model.
+        if _is_ollama_base_url(base_url) and not context_length:
+            context_length = get_model_context_length(base_url, name, api_key=api_key, timeout=timeout)
+        if not max_tokens:
+            max_tokens = min(_int_or_default(context_length), MAX_INFERRED_OUTPUT_TOKENS)
+
+        models.append({
             "name": name,
-            "max_tokens": get_model_max_tokens(base_url, name, api_key=api_key, timeout=timeout),
-            "context_length": get_model_context_length(base_url, name, api_key=api_key, timeout=timeout),
-        }
-        for name in deduped
-    ]
+            "max_tokens": _int_or_default(max_tokens),
+            "context_length": _int_or_default(context_length),
+        })
+
+    with _MODEL_LIST_CACHE_LOCK:
+        _MODEL_LIST_CACHE[cache_key] = (now, models)
+    return [dict(item) for item in models]
 
 
 def chat_details(
@@ -426,6 +651,7 @@ def chat_details(
         }
 
     url = base_url.rstrip("/") + "/chat/completions"
+    is_anthropic = _is_anthropic_base_url(base_url)
     if _is_anthropic_base_url(base_url):
         url = _anthropic_api_base(base_url) + "/messages"
         payload = {
@@ -450,12 +676,18 @@ def chat_details(
         }
         headers = _provider_headers(api_key, base_url=base_url)
 
-    try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
-    except requests.RequestException as e:
-        raise ModelError(f"Request to {url} failed: {e}") from e
+    resp = _request_with_retry("POST", url, headers=headers, payload=payload, timeout=timeout)
+    if is_anthropic and _is_anthropic_temperature_deprecated(resp):
+        # Some Claude models reject explicit temperature; retry once without it.
+        payload_no_temp = dict(payload)
+        payload_no_temp.pop("temperature", None)
+        resp = _request_with_retry("POST", url, headers=headers, payload=payload_no_temp, timeout=timeout)
 
     if resp.status_code != 200:
+        if resp.status_code == 429:
+            msg = getattr(resp, "_virtus_rate_limit_message", "")
+            if msg:
+                raise ModelError(msg)
         raise ModelError(f"{url} returned {resp.status_code}: {resp.text[:400]}")
 
     try:

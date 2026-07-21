@@ -27,6 +27,13 @@ from .virtus import apply_virtus
 
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "results")
 
+# Tokens reserved from the model's max output budget to leave room for
+# context/system overhead. Subtracted from the reported max_tokens.
+RESERVED_TOKENS = 800
+
+ANTHROPIC_TRIAL_DELAY_SECONDS = float(os.getenv("ANTHROPIC_TRIAL_DELAY_SECONDS", "0.8"))
+ANTHROPIC_429_COOLDOWN_SECONDS = float(os.getenv("ANTHROPIC_429_COOLDOWN_SECONDS", "10"))
+
 
 def _public_config(config: dict | None) -> dict | None:
     if config is None:
@@ -172,6 +179,8 @@ class ExperimentManager:
             scenario = config["scenario"]
             base_system = scenario["system_prompt"].replace("{goal}", scenario.get("goal", ""))
             user_prompt = scenario["user_prompt"]
+            base_url = str(config.get("base_url") or "")
+            is_anthropic = "api.anthropic.com" in base_url.lower()
 
             for condition in config["conditions"]:
                 system_prompt = apply_virtus(base_system) if condition == "virtus" else base_system
@@ -201,7 +210,7 @@ class ExperimentManager:
                             model=config["model"],
                             api_key=config.get("api_key", "ollama"),
                             temperature=config.get("temperature", 1.0),
-                            max_tokens=config.get("max_tokens", 1024),
+                            max_tokens=max(0, int(config.get("max_tokens", 1024)) - RESERVED_TOKENS),
                         )
                         response = response_details["text"]
                         trial["response"] = response
@@ -214,17 +223,23 @@ class ExperimentManager:
                             base_url=config["base_url"],
                             model=config.get("judge_model") or config["model"],
                             api_key=config.get("api_key", "ollama"),
-                            max_tokens=config.get("judge_max_tokens"),
+                            max_tokens=max(0, int(config.get("max_tokens", 1024)) - RESERVED_TOKENS),
                         )
                         trial.update(verdict)
                     except model_client.ModelError as e:
                         trial["error"] = str(e)
                         trial["category"] = "OTHER"
+                        if is_anthropic and " returned 429" in trial["error"]:
+                            # Automatic cooldown so burst failures do not repeat immediately.
+                            time.sleep(max(0.0, ANTHROPIC_429_COOLDOWN_SECONDS))
 
                     with self._lock:
                         self.state["trials"].append(trial)
                         self.state["progress"]["done"] += 1
                         self.state["summary"] = self._compute_summary()
+
+                    if is_anthropic and ANTHROPIC_TRIAL_DELAY_SECONDS > 0:
+                        time.sleep(max(0.0, ANTHROPIC_TRIAL_DELAY_SECONDS))
 
             self._finish("done")
         except Exception as e:  # noqa: BLE001 — surface anything to the UI

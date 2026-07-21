@@ -1,0 +1,191 @@
+/* Virtus OAuth modal — isolated styles so app.js / style.css stay small.
+   Loaded only when the user opens the modal. Uses the same CSS variables
+   as the rest of the app (defined in style.css). */
+
+.oauth-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 11, 16, 0.72);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease;
+}
+.oauth-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.oauth-modal {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  transform: translateY(8px) scale(0.98);
+  transition: transform .18s ease;
+}
+.oauth-overlay.open .oauth-modal {
+  transform: translateY(0) scale(1);
+}
+
+.oauth-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--line);
+}
+.oauth-head h2 {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.oauth-head .oauth-sub {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.oauth-close {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 3px;
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  transition: color .12s, border-color .12s;
+}
+.oauth-close:hover { color: var(--ink); border-color: var(--muted); }
+
+.oauth-body {
+  padding: 18px 22px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.oauth-field { display: flex; flex-direction: column; gap: 6px; }
+.oauth-field label {
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.03em;
+}
+.oauth-field select,
+.oauth-field input[type="text"],
+.oauth-field input[type="password"] {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 9px 11px;
+  border-radius: 3px;
+}
+.oauth-field input:focus,
+.oauth-field select:focus {
+  outline: none;
+  border-color: var(--restrain);
+  box-shadow: 0 0 0 1px var(--restrain-dk);
+}
+
+.oauth-status {
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.oauth-status .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--faint);
+  flex: none;
+}
+.oauth-status.ok   { color: var(--restrain); border-color: var(--restrain-dk); }
+.oauth-status.ok   .dot { background: var(--restrain); }
+.oauth-status.bad  { color: var(--coerce);   border-color: var(--coerce-dk); }
+.oauth-status.bad  .dot { background: var(--coerce); }
+.oauth-status.warn { color: var(--c-veiled); border-color: var(--c-veiled); }
+.oauth-status.warn .dot { background: var(--c-veiled); }
+
+.oauth-step {
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.oauth-step .step-title {
+  font-family: var(--display);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.oauth-url {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 8px 10px;
+  word-break: break-all;
+  max-height: 90px;
+  overflow: auto;
+}
+.oauth-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.oauth-actions .btn { flex: 1 1 auto; }
+.oauth-actions .btn.primary { flex: 1 1 100%; }
+
+.oauth-error {
+  color: var(--coerce);
+  font-size: 12px;
+  border-left: 2px solid var(--coerce);
+  padding-left: 10px;
+  display: none;
+}
+.oauth-error.show { display: block; }
+
+.oauth-help {
+  font-size: 11px;
+  color: var(--faint);
+  line-height: 1.55;
+}
+.oauth-help code {
+  background: var(--panel-2);
+  padding: 1px 5px;
+  border-radius: 2px;
+  color: var(--restrain);
+  font-size: 11px;
+}
+
+.oauth-trigger {
+  /* The button on the main screen that opens the modal. */
+  font-size: 12px;
+  padding: 6px 12px;
+}

@@ -27,10 +27,11 @@ import glob
 import json
 import os
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, render_template, request, jsonify, make_response
 
 from virtus_eval import model_client
 from virtus_eval.runner import RESULTS_DIR, manager, public_snapshot
+from virtus_eval.oauth_routes import register_oauth_blueprint
 
 BASE_DIR = os.path.dirname(__file__)
 SCENARIO_PATH = os.path.join(BASE_DIR, "scenarios", "shutdown_blackmail.json")
@@ -38,6 +39,9 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 app = Flask(__name__)
 app.config["MOCK_DEFAULT"] = False
+
+# Multi-provider OAuth (Anthropic, xAI, …) — endpoints under /api/oauth/*.
+register_oauth_blueprint(app)
 
 
 def resolve_api_key(cfg: dict) -> str:
@@ -48,6 +52,12 @@ def resolve_api_key(cfg: dict) -> str:
 def validate_provider_config(base_url: str, model: str, api_key: str, label: str) -> str | None:
     ok, msg = model_client.ping(base_url, model, api_key)
     if ok:
+        return None
+    # Providers can transiently return 429 during burst traffic. In that case
+    # allow the run to start instead of hard-blocking in preflight; the runner
+    # will still surface a real error if the limit persists.
+    lowered = (msg or "").lower()
+    if "returned 429" in lowered or "rate_limit_error" in lowered:
         return None
     return f"{label} check failed: {msg}"
 
@@ -81,15 +91,20 @@ def load_scenario() -> dict:
 
 @app.route("/")
 def index():
-    return render_template(
+    resp = make_response(render_template(
         "index.html",
         mock_default=app.config["MOCK_DEFAULT"],
         default_model=model_client.DEFAULT_MODEL,
         default_base_url=model_client.DEFAULT_BASE_URL,
         app_js_version=int(os.path.getmtime(os.path.join(STATIC_DIR, "app.js"))),
         style_css_version=int(os.path.getmtime(os.path.join(STATIC_DIR, "style.css"))),
-    )
-
+        oauth_js_version=int(os.path.getmtime(os.path.join(STATIC_DIR, "oauth.js"))),
+        oauth_css_version=int(os.path.getmtime(os.path.join(STATIC_DIR, "oauth.css"))),
+    ))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 @app.route("/api/scenario")
 def api_scenario():
@@ -121,7 +136,7 @@ def api_models():
     base_url = cfg.get("base_url", model_client.DEFAULT_BASE_URL)
     api_key = resolve_api_key(cfg)
     try:
-        models = model_client.list_models_with_metadata(base_url=base_url, api_key=api_key)
+        models = model_client.list_models_with_metadata(base_url=base_url, api_key=api_key, timeout=12)
     except model_client.ModelError as e:
         return jsonify({"ok": False, "error": str(e), "models": []}), 400
     return jsonify({"ok": True, "models": models})

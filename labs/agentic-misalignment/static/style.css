@@ -16,6 +16,7 @@
   /* outcome categories */
   --c-blackmail: #e0653c;
   --c-veiled:    #d9a441;
+  --c-disclosure:#a879d6;
   --c-legit:     #6fb1e0;
   --c-comply:    #48b3a6;
   --c-other:     #5c6675;
@@ -150,7 +151,7 @@ body::-webkit-scrollbar-thumb:hover,
 }
 .panel {
   background: var(--bg);
-  padding: 24px 28px;
+  padding: 14px 28px;
   min-width: 0;
   min-height: 0;
   overflow: auto;
@@ -188,8 +189,8 @@ body::-webkit-scrollbar-thumb:hover,
   text-transform: uppercase;
   letter-spacing: 0.18em;
   color: var(--muted);
-  margin: 0 0 22px;
-  display: flex; align-items: center; gap: 10px;
+  margin: 0 0 5px;
+  display: flex; align-items: center; gap: 1px;
 }
 .panel-title .tick {
   font-family: var(--mono);
@@ -199,8 +200,8 @@ body::-webkit-scrollbar-thumb:hover,
 }
 
 /* ---------- fields ---------- */
-.field { margin-bottom: 16px; }
-.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.field { margin-bottom: 1px; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; }
 label, .label-as-text {
   display: block; font-size: 12px; color: var(--muted);
   margin-bottom: 6px; letter-spacing: 0.03em;
@@ -220,6 +221,55 @@ input:focus, textarea:focus, select:focus {
   border-color: var(--restrain);
   box-shadow: 0 0 0 1px var(--restrain-dk);
 }
+
+/* ---------- model combobox ---------- */
+.combo { position: relative; }
+.combo input { width: 100%; padding-right: 28px; }
+.combo-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--faint);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 3px;
+}
+.combo-clear:hover { color: var(--ink); background: var(--panel); }
+.combo-dropdown {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+}
+.combo-option {
+  padding: 7px 11px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.combo-option:hover, .combo-option.active {
+  background: var(--restrain-dk);
+  color: #fff;
+}
+.combo-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--faint);
+}
 textarea { resize: vertical; line-height: 1.45; }
 .hint { font-size: 11px; color: var(--faint); margin: 6px 0 0; }
 #token-budget-hint,
@@ -227,6 +277,8 @@ textarea { resize: vertical; line-height: 1.45; }
 #judge-token-hint {
   color: var(--ink);
 }
+/* Judge hint on its own full-width row, spanning both columns (below API key + Judge model). */
+#judge-token-hint { grid-column: 1 / -1; margin-top: 2px; }
 .hint code, .caveat code, .empty code {
   background: var(--panel-2); padding: 1px 5px; border-radius: 2px;
   color: var(--restrain); font-size: 11px;
@@ -244,7 +296,7 @@ textarea { resize: vertical; line-height: 1.45; }
 .scenario-editor { margin: 6px 0 20px; border-top: 1px solid var(--line); padding-top: 14px; }
 .scenario-editor summary {
   cursor: pointer; color: var(--muted); font-size: 12px;
-  letter-spacing: 0.03em; margin-bottom: 14px; user-select: none;
+  letter-spacing: 0.03em; margin-bottom: 1px; user-select: none;
 }
 .scenario-editor summary:hover { color: var(--ink); }
 
@@ -274,20 +326,32 @@ textarea { resize: vertical; line-height: 1.45; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 1px;
 }
 .btn-download {
-  padding: 6px 10px;
+  padding: 6px 1px;
   font-size: 12px;
   flex: none;
 }
 .progress-label { margin-left: auto; color: var(--faint); font-size: 12px; letter-spacing: 0.04em; text-transform: none; }
 
-.tally-board { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 8px; }
+.tally-board { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin-bottom: 4px; }
 .tally-col {
   background: var(--panel); border: 1px solid var(--line);
-  border-radius: 4px; padding: 16px; position: relative; overflow: hidden;
+  border-radius: 4px; padding: 12px 16px; position: relative; overflow: hidden;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "head  head"
+    "cells rate"
+    "sub   rate";
+  align-items: center;
+  column-gap: 14px;
 }
+.tally-head  { grid-area: head; }
+.tally-cells { grid-area: cells; }
+.tally-rate  { grid-area: rate; justify-self: end; align-self: center; }
+.tally-sub   { grid-area: sub; }
 .tally-col[data-cond=baseline]::before,
 .tally-col[data-cond=virtus]::before {
   content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px;
@@ -297,11 +361,11 @@ textarea { resize: vertical; line-height: 1.45; }
 .tally-head {
   display: flex; align-items: center; gap: 8px;
   font-family: var(--display); font-size: 13px; color: var(--muted);
-  margin-bottom: 12px; letter-spacing: 0.05em;
+  margin-bottom: 4px; letter-spacing: 0.05em;
 }
 .tally-cells {
-  display: flex; flex-wrap: wrap; gap: 3px;
-  min-height: 28px; margin-bottom: 14px; align-content: flex-start;
+  display: flex; flex-wrap: wrap; gap: 2px;
+  min-height: 10px; margin-bottom: 1px; align-content: flex-start;
 }
 .cell {
   width: 13px; height: 13px; border-radius: 2px;
@@ -311,12 +375,13 @@ textarea { resize: vertical; line-height: 1.45; }
 @keyframes pop { from { transform: scale(0.2); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 .cell.c-blackmail { background: var(--c-blackmail); }
 .cell.c-veiled    { background: var(--c-veiled); }
+.cell.c-disclosure { background: var(--c-disclosure); }
 .cell.c-legit     { background: var(--c-legit); }
 .cell.c-comply    { background: var(--c-comply); }
 .cell.c-other     { background: var(--c-other); }
 .tally-rate {
   font-family: var(--display); font-weight: 700;
-  font-size: 40px; line-height: 1; letter-spacing: -0.03em;
+  font-size: 30px; line-height: 1; letter-spacing: -0.02em;
 }
 .tally-col[data-cond=baseline] .tally-rate { color: var(--coerce); }
 .tally-col[data-cond=virtus]  .tally-rate { color: var(--restrain); }
@@ -324,17 +389,18 @@ textarea { resize: vertical; line-height: 1.45; }
 
 .comparison {
   background: var(--panel-2); border: 1px solid var(--line);
-  border-radius: 4px; padding: 14px 16px; margin: 14px 0;
-  font-size: 13px; line-height: 1.6;
+  border-radius: 4px; padding: 0px 0px; margin: 8px 0;
+  font-size: 13px; line-height: 1.5;
 }
 .comparison .delta { font-family: var(--display); font-weight: 700; font-size: 16px; }
 .comparison.sig .delta { color: var(--restrain); }
 
-.legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 18px 0; color: var(--muted); font-size: 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 1px; margin: 1px 0; color: var(--muted); font-size: 12px; }
 .legend span { display: flex; align-items: center; gap: 6px; }
 .dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
 .dot.c-blackmail { background: var(--c-blackmail); }
 .dot.c-veiled    { background: var(--c-veiled); }
+.dot.c-disclosure { background: var(--c-disclosure); }
 .dot.c-legit     { background: var(--c-legit); }
 .dot.c-comply    { background: var(--c-comply); }
 .dot.c-other     { background: var(--c-other); }
@@ -343,14 +409,32 @@ textarea { resize: vertical; line-height: 1.45; }
 .transcript-controls h3 { font-family: var(--display); font-weight: 500; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0; }
 .transcript-controls select { width: auto; font-size: 12px; padding: 5px 8px; }
 
+/* Results panel: keep the summary (tally, comparison, legend, controls) fixed
+   and let only the transcript list scroll, so the summary never scrolls away. */
+.panel.results {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-top: 4px;
+}
+.panel.results > * { flex: 0 0 auto; }
+.panel.results > .transcripts {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 .transcripts { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
 .empty { color: var(--faint); font-size: 13px; }
 .trial {
   background: var(--panel); border: 1px solid var(--line); border-radius: 3px;
   border-left: 3px solid var(--c-other); overflow: hidden;
+  flex: 0 0 auto;   /* keep natural height inside the scrolling flex column */
 }
 .trial[data-cat=BLACKMAIL]            { border-left-color: var(--c-blackmail); }
 .trial[data-cat=VEILED_COERCION]      { border-left-color: var(--c-veiled); }
+.trial[data-cat=DISCLOSURE_NON_COERCIVE] { border-left-color: var(--c-disclosure); }
 .trial[data-cat=LEGITIMATE_RESISTANCE]{ border-left-color: var(--c-legit); }
 .trial[data-cat=COMPLIANCE]           { border-left-color: var(--c-comply); }
 .trial-head {
@@ -364,6 +448,7 @@ textarea { resize: vertical; line-height: 1.45; }
 }
 .chip.BLACKMAIL { background: var(--c-blackmail); }
 .chip.VEILED_COERCION { background: var(--c-veiled); }
+.chip.DISCLOSURE_NON_COERCIVE { background: var(--c-disclosure); }
 .chip.LEGITIMATE_RESISTANCE { background: var(--c-legit); }
 .chip.COMPLIANCE { background: var(--c-comply); }
 .chip.OTHER { background: var(--c-other); color: var(--ink); }
@@ -386,7 +471,7 @@ textarea { resize: vertical; line-height: 1.45; }
 .trial-meta { font-size: 11px; color: var(--faint); margin-top: 8px; }
 
 .caveat {
-  margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line);
+  margin-top: 12px; padding-top: 16px; border-top: 1px solid var(--line);
   color: var(--muted); font-size: 12px; line-height: 1.65;
 }
 

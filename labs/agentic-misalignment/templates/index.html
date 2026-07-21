@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=style_css_version) }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='oauth.css', v=oauth_css_version) }}">
 </head>
 <body data-mock-default="{{ 'true' if mock_default else 'false' }}">
 
@@ -26,6 +27,7 @@
           <option value="">Loading providers...</option>
         </select>
         <span id="provider-status" class="provider-status idle" hidden></span>
+        <button id="btn-oauth" class="btn ghost oauth-trigger" type="button">OAuth login</button>
       </div>
     </div>
   </header>
@@ -44,9 +46,11 @@
 
       <div class="field">
         <label for="model">Model under test</label>
-        <select id="model" data-default-model="{{ default_model }}">
-          <option value="">Select a model</option>
-        </select>
+        <div class="combo" id="model-combo">
+          <input id="model" type="text" autocomplete="off" spellcheck="false" placeholder="Type at least 3 characters to filter…">
+          <button class="combo-clear" id="model-clear" type="button" aria-label="Clear" hidden>×</button>
+          <div class="combo-dropdown" id="model-dropdown" hidden></div>
+        </div>
         <p id="model-limit-hint" class="hint">Select one of the models exposed by the current provider endpoint.</p>
       </div>
 
@@ -58,8 +62,8 @@
         <div class="field">
           <label for="judge_model">Judge model</label>
           <input id="judge_model" type="text" placeholder="(same as test)" spellcheck="false">
-          <p id="judge-token-hint" class="hint">Judge token budget will follow the selected model unless you override it.</p>
         </div>
+        <p id="judge-token-hint" class="hint">Judge token budget will follow the selected model unless you override it.</p>
       </div>
 
       <div class="field-row">
@@ -154,5 +158,6 @@
   </main>
 
   <script src="{{ url_for('static', filename='app.js', v=app_js_version) }}"></script>
+  <script src="{{ url_for('static', filename='oauth.js', v=oauth_js_version) }}"></script>
 </body>
 </html>
