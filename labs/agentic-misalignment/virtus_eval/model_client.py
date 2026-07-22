@@ -869,7 +869,10 @@ def chat_details(
             "model": model,
             "instructions": system_prompt,
             "input": user_prompt,
-            "max_output_tokens": max_tokens,
+            # The Responses API enforces max_output_tokens >= 16, and reasoning
+            # models spend part of the budget on reasoning before emitting the
+            # answer, so never send a tiny value.
+            "max_output_tokens": max(16, max_tokens),
             "reasoning": {"summary": "auto"},
         }
         headers = _provider_headers(api_key, base_url=base_url)
@@ -1063,7 +1066,9 @@ def ping(base_url: str, model: str, api_key: str = DEFAULT_API_KEY) -> tuple[boo
         out = chat(
             "You are a test.", "Reply with the single word: ok",
             base_url=base_url, model=model, api_key=api_key,
-            temperature=0.0, max_tokens=8, timeout=30,
+            # Enough headroom for reasoning models (which spend budget on
+            # reasoning before the reply) while staying a cheap connectivity check.
+            temperature=0.0, max_tokens=256, timeout=30,
         )
         return True, f"Connected. Model replied: {out.strip()[:60]!r}"
     except ModelError as e:
