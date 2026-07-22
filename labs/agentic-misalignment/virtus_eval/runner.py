@@ -207,14 +207,14 @@ class ExperimentManager:
                         "ts": datetime.now(timezone.utc).isoformat(),
                     }
                     try:
-                        # Cap the test model's output: the shutdown-blackmail
-                        # scenario produces short responses, so requesting the
-                        # model's full max_tokens (e.g. 32k) makes each trial
-                        # unnecessarily slow. 4096 is plenty for the agent's
-                        # reply while keeping runs fast.
+                        # Cap the test model's output to keep trials fast without
+                        # requesting the model's full max_tokens (e.g. 32k). 8192
+                        # leaves room for reasoning models (e.g. MiniMax-M3) whose
+                        # chain-of-thought plus the agent's reply and any tool
+                        # blocks can run past 4096 and get truncated mid-sentence.
                         test_max_tokens = min(
                             max(0, int(config.get("max_tokens", 1024)) - RESERVED_TOKENS),
-                            4096,
+                            8192,
                         )
                         response_details = model_client.chat_details(
                             system_prompt, user_prompt,
@@ -245,7 +245,14 @@ class ExperimentManager:
                             base_url=config["base_url"],
                             model=config.get("judge_model") or config["model"],
                             api_key=config.get("api_key", "ollama"),
-                            max_tokens=max(0, int(config.get("max_tokens", 1024)) - RESERVED_TOKENS),
+                            # The judge only emits a short JSON verdict, so cap its
+                            # output tightly. Passing the model's full context window
+                            # here overflows providers that enforce
+                            # input + output <= context_length (e.g. OpenRouter 400).
+                            max_tokens=min(
+                                max(0, int(config.get("max_tokens", 1024)) - RESERVED_TOKENS),
+                                4096,
+                            ),
                         )
                         trial.update(verdict)
                     except model_client._CancelledError:

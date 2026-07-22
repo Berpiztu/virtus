@@ -241,6 +241,15 @@ def _is_xai_base_url(base_url: str) -> bool:
     return host in {"api.x.ai", "api.xai.com"}
 
 
+def _is_openai_base_url(base_url: str) -> bool:
+    """Return True for OpenAI's native endpoint (api.openai.com)."""
+    try:
+        host = urlparse(base_url).netloc.lower()
+    except ValueError:
+        return False
+    return host == "api.openai.com"
+
+
 def _is_oauth_token(api_key: str) -> bool:
     """Return True if *api_key* looks like an Anthropic OAuth/setup token.
 
@@ -340,6 +349,30 @@ def _is_anthropic_temperature_deprecated(resp: requests.Response) -> bool:
         return False
     msg = str(err.get("message") or "").strip().lower()
     return "temperature" in msg and "deprecated" in msg
+
+
+def _openai_rejects_max_tokens(resp: requests.Response) -> bool:
+    """Detect 400 responses that reject ``max_tokens``.
+
+    OpenAI's newer / reasoning models (o-series, gpt-5, …) no longer accept
+    ``max_tokens`` on /chat/completions and return an "Unsupported parameter"
+    error pointing at ``max_completion_tokens``. Some OpenAI-compatible proxies
+    forward the same error, so we key on the message rather than the host.
+    """
+    if resp.status_code != 400:
+        return False
+    try:
+        data = resp.json()
+    except (ValueError, json.JSONDecodeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    err = data.get("error")
+    if not isinstance(err, dict):
+        return False
+    msg = str(err.get("message") or "").lower()
+    param = str(err.get("param") or "").lower()
+    return "max_completion_tokens" in msg or (param == "max_tokens" and "max_tokens" in msg)
 
 
 def _request_with_retry(
@@ -756,8 +789,14 @@ def chat_details(
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": temperature,
-            "max_tokens": max_tokens,
         }
+        # OpenAI's newer models reject ``max_tokens`` and require
+        # ``max_completion_tokens``. Send the modern key up-front for the
+        # native endpoint; other OpenAI-compatible providers keep ``max_tokens``.
+        if _is_openai_base_url(base_url):
+            payload["max_completion_tokens"] = max_tokens
+        else:
+            payload["max_tokens"] = max_tokens
         headers = _provider_headers(api_key, base_url=base_url)
 
     resp = _request_with_retry("POST", url, headers=headers, payload=payload, timeout=timeout)
@@ -766,6 +805,12 @@ def chat_details(
         payload_no_temp = dict(payload)
         payload_no_temp.pop("temperature", None)
         resp = _request_with_retry("POST", url, headers=headers, payload=payload_no_temp, timeout=timeout)
+    elif not is_anthropic and "max_tokens" in payload and _openai_rejects_max_tokens(resp):
+        # OpenAI-compatible proxy rejected ``max_tokens``; retry once with the
+        # ``max_completion_tokens`` spelling the model expects.
+        payload_retry = dict(payload)
+        payload_retry["max_completion_tokens"] = payload_retry.pop("max_tokens")
+        resp = _request_with_retry("POST", url, headers=headers, payload=payload_retry, timeout=timeout)
 
     if resp.status_code != 200:
         if resp.status_code == 429:
