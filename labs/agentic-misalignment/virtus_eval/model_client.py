@@ -269,8 +269,12 @@ def _is_oauth_token(api_key: str) -> bool:
 
 
 def _is_retryable_status(status_code: int) -> bool:
-    """Return True for transient upstream failures worth retrying."""
-    return status_code in (429, 500, 502, 503, 504)
+    """Return True for transient upstream failures worth retrying.
+
+    529 is Anthropic/MiniMax's "overloaded" status — transient server-side
+    congestion, so it is retried like a 503.
+    """
+    return status_code in (429, 500, 502, 503, 504, 529)
 
 
 def _retry_delay_seconds(resp: requests.Response, attempt: int) -> float:
