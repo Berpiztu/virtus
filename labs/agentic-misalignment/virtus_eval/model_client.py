@@ -379,6 +379,29 @@ def _openai_rejects_max_tokens(resp: requests.Response) -> bool:
     return "max_completion_tokens" in msg or (param == "max_tokens" and "max_tokens" in msg)
 
 
+def _openai_rejects_reasoning(resp: requests.Response) -> bool:
+    """Detect 400 responses that reject the ``reasoning`` field.
+
+    Sent to the Responses API for chain-of-thought summaries. A non-reasoning
+    model, or an org not verified for summaries, returns a 400. Key on the
+    message so we can fall back to a plain request and still get the answer.
+    """
+    if resp.status_code != 400:
+        return False
+    try:
+        data = resp.json()
+    except (ValueError, json.JSONDecodeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    err = data.get("error")
+    if not isinstance(err, dict):
+        return False
+    msg = str(err.get("message") or "").lower()
+    param = str(err.get("param") or "").lower()
+    return "reasoning" in param or "reasoning" in msg or "summary" in msg
+
+
 def _request_with_retry(
     method: str,
     url: str,
@@ -511,6 +534,55 @@ def _extract_anthropic_message_parts(data: dict) -> tuple[str, str, str, str | N
         raise ModelError(f"Model returned no text content: {str(data)[:400]}")
 
     return content, reasoning, text, data.get("stop_reason")
+
+
+def _extract_openai_responses_parts(data: dict):
+    """Parse an OpenAI Responses API result into (content, reasoning, text, finish_reason).
+
+    The Responses API returns an ``output`` list mixing ``reasoning`` items
+    (whose ``summary[]`` holds the reasoning summary) and ``message`` items
+    (whose ``content[]`` holds the final ``output_text``). We collapse those into
+    the same shape the other providers return so trials are comparable, wrapping
+    the reasoning summary in <thinking> tags.
+    """
+    output = data.get("output") or []
+    content_parts = []
+    reasoning_parts = []
+    if isinstance(output, list):
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            itype = item.get("type")
+            if itype == "reasoning":
+                for part in item.get("summary") or []:
+                    if isinstance(part, dict) and part.get("text"):
+                        reasoning_parts.append(part["text"])
+            elif itype == "message":
+                for part in item.get("content") or []:
+                    if isinstance(part, dict) and part.get("type") in ("output_text", "text") and part.get("text"):
+                        content_parts.append(part["text"])
+
+    content = "\n\n".join(p for p in content_parts if p).strip()
+    reasoning = "\n\n".join(p for p in reasoning_parts if p).strip()
+
+    # Map Responses status to chat-completions finish_reason vocabulary so
+    # downstream truncation checks work uniformly across providers.
+    if data.get("status") == "incomplete":
+        finish_reason = (data.get("incomplete_details") or {}).get("reason") or "incomplete"
+        if finish_reason == "max_output_tokens":
+            finish_reason = "length"
+    else:
+        finish_reason = "stop"
+
+    if content and reasoning:
+        text = f"<thinking>\n{reasoning}\n</thinking>\n\n{content}"
+    elif content:
+        text = content
+    elif reasoning:
+        text = f"<thinking>\n{reasoning}\n</thinking>"
+    else:
+        text = ""
+    return content, reasoning, text, finish_reason
 
 
 def _get_anthropic_model_info(
@@ -773,7 +845,8 @@ def chat_details(
 
     url = base_url.rstrip("/") + "/chat/completions"
     is_anthropic = _is_anthropic_base_url(base_url)
-    if _is_anthropic_base_url(base_url):
+    is_openai = _is_openai_base_url(base_url)
+    if is_anthropic:
         url = _anthropic_api_base(base_url) + "/messages"
         payload = {
             "model": model,
@@ -785,7 +858,25 @@ def chat_details(
             "max_tokens": max_tokens,
         }
         headers = _provider_headers(api_key, base_url=base_url)
+    elif is_openai:
+        # OpenAI's native endpoint only exposes reasoning-model chain-of-thought
+        # via the Responses API (as summaries) — chat/completions returns just the
+        # final answer. Use /responses so OpenAI trials also carry a `reasoning`
+        # field, matching what Anthropic/MiniMax return. Reasoning models reject a
+        # non-default temperature, so we omit it here.
+        url = base_url.rstrip("/") + "/responses"
+        payload = {
+            "model": model,
+            "instructions": system_prompt,
+            "input": user_prompt,
+            "max_output_tokens": max_tokens,
+            "reasoning": {"summary": "auto"},
+        }
+        headers = _provider_headers(api_key, base_url=base_url)
     else:
+        # OpenAI-compatible proxies keep chat/completions with max_tokens; if a
+        # proxy rejects it for a newer model, we retry with max_completion_tokens
+        # below.
         payload = {
             "model": model,
             "messages": [
@@ -793,14 +884,8 @@ def chat_details(
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": temperature,
+            "max_tokens": max_tokens,
         }
-        # OpenAI's newer models reject ``max_tokens`` and require
-        # ``max_completion_tokens``. Send the modern key up-front for the
-        # native endpoint; other OpenAI-compatible providers keep ``max_tokens``.
-        if _is_openai_base_url(base_url):
-            payload["max_completion_tokens"] = max_tokens
-        else:
-            payload["max_tokens"] = max_tokens
         headers = _provider_headers(api_key, base_url=base_url)
 
     resp = _request_with_retry("POST", url, headers=headers, payload=payload, timeout=timeout)
@@ -809,7 +894,13 @@ def chat_details(
         payload_no_temp = dict(payload)
         payload_no_temp.pop("temperature", None)
         resp = _request_with_retry("POST", url, headers=headers, payload=payload_no_temp, timeout=timeout)
-    elif not is_anthropic and "max_tokens" in payload and _openai_rejects_max_tokens(resp):
+    elif is_openai and _openai_rejects_reasoning(resp):
+        # Non-reasoning model, or an org not verified for reasoning summaries:
+        # retry once without the reasoning field so we still get the answer.
+        payload_retry = dict(payload)
+        payload_retry.pop("reasoning", None)
+        resp = _request_with_retry("POST", url, headers=headers, payload=payload_retry, timeout=timeout)
+    elif not is_anthropic and not is_openai and "max_tokens" in payload and _openai_rejects_max_tokens(resp):
         # OpenAI-compatible proxy rejected ``max_tokens``; retry once with the
         # ``max_completion_tokens`` spelling the model expects.
         payload_retry = dict(payload)
@@ -825,7 +916,7 @@ def chat_details(
 
     try:
         data = resp.json()
-        if _is_anthropic_base_url(base_url):
+        if is_anthropic:
             content, reasoning, text, stop_reason = _extract_anthropic_message_parts(data)
             return {
                 "text": text,
@@ -833,6 +924,16 @@ def chat_details(
                 "reasoning": reasoning,
                 "finish_reason": stop_reason,
             }
+        if is_openai:
+            content, reasoning, text, finish_reason = _extract_openai_responses_parts(data)
+            if text:
+                return {
+                    "text": text,
+                    "content": content,
+                    "reasoning": reasoning,
+                    "finish_reason": finish_reason,
+                }
+            raise ModelError(f"Model returned no text content: {resp.text[:400]}")
         choice = data["choices"][0]
         content, reasoning, text = _extract_message_parts(choice)
         if text:
