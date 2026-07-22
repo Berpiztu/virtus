@@ -2,3 +2,4 @@ temp/
 labs/agentic-misalignment/.oauth/anthropic.json
 labs/agentic-misalignment/.oauth/xai.json
 labs/agentic-misalignment/.oauth
+labs/agentic-misalignment/docs/inter.md

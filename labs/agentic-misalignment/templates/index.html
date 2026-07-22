@@ -61,7 +61,11 @@
         </div>
         <div class="field">
           <label for="judge_model">Judge model</label>
-          <input id="judge_model" type="text" placeholder="(same as test)" spellcheck="false">
+          <div class="combo" id="judge-combo">
+            <input id="judge_model" type="text" autocomplete="off" spellcheck="false" placeholder="(same as test)">
+            <button class="combo-clear" id="judge-clear" type="button" aria-label="Clear" hidden>×</button>
+            <div class="combo-dropdown" id="judge-dropdown" hidden></div>
+          </div>
         </div>
         <p id="judge-token-hint" class="hint">Judge token budget will follow the selected model unless you override it.</p>
       </div>

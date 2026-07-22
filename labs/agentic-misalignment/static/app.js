@@ -47,33 +47,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("filter-cat").addEventListener("change", applyFilter);
   $("base_url").addEventListener("change", () => refreshModels());
   $("api_key").addEventListener("change", () => refreshModels());
-  $("model").addEventListener("input", () => {
-    openComboDropdown();
-    updateModelLimitHint();
-    updateComboClear();
-  });
-  $("model").addEventListener("focus", openComboDropdown);
-  $("model").addEventListener("blur", () => setTimeout(closeComboDropdown, 150));
-  $("model").addEventListener("keydown", (e) => {
-    if (e.key === "ArrowDown") { e.preventDefault(); moveComboActive(1); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); moveComboActive(-1); }
-    else if (e.key === "Enter") { e.preventDefault(); confirmComboActive(); }
-    else if (e.key === "Escape") { closeComboDropdown(); }
-  });
-  const clearBtn = $("model-clear");
-  if (clearBtn) {
-    clearBtn.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      const input = $("model");
-      input.value = "";
-      input.dataset.maxTokens = "";
-      updateModelLimitHint();
-      updateComboClear();
-      input.focus();
-      openComboDropdown();
-    });
-  }
-  $("judge_model").addEventListener("input", updateModelLimitHint);
+  wireCombo(modelCombo, "model", "model-clear");
+  wireCombo(judgeCombo, "judge_model", "judge-clear");
 
   // Fetch the running/last experiment snapshot early so we can restore the
   // user's form values after the provider list is initialized.
@@ -128,11 +103,14 @@ async function restoreConfigFromStatus(st) {
     if (cfg.max_tokens) {
       input.dataset.maxTokens = String(cfg.max_tokens + RESERVED_TOKENS);
     }
-    updateComboClear();
+    modelCombo.updateClear();
     updateModelLimitHint();
   }
 
-  if (cfg.judge_model != null) $("judge_model").value = cfg.judge_model;
+  if (cfg.judge_model != null) {
+    $("judge_model").value = cfg.judge_model;
+    judgeCombo.updateClear();
+  }
   if (cfg.n_runs != null) $("n_runs").value = cfg.n_runs;
   if (cfg.temperature != null) $("temperature").value = cfg.temperature;
 
@@ -252,8 +230,8 @@ function clearModelOptions(message = "Loading models...") {
   input.value = "";
   input.placeholder = message;
   input.dataset.maxTokens = "";
-  closeComboDropdown();
-  updateComboClear();
+  modelCombo.close();
+  modelCombo.updateClear();
   updateModelLimitHint();
 }
 
@@ -295,8 +273,6 @@ async function refreshModels() {
   }
 }
 
-let comboActiveIndex = -1;
-
 function setModelOptions(models, current) {
   const input = $("model");
   modelMetadata = new Map();
@@ -328,15 +304,15 @@ function setModelOptions(models, current) {
   if (!unique.length) {
     input.value = "";
     input.placeholder = "No models available";
-    closeComboDropdown();
-    updateComboClear();
+    modelCombo.close();
+    modelCombo.updateClear();
     updateModelLimitHint();
     return;
   }
 
   const preferred = unique.includes(current) ? current : unique[0];
   input.value = preferred || unique[0];
-  input.dataset.maxTokens = String(modelMetadata.get(preferred)?.max_tokens || "");  updateComboClear();  updateModelLimitHint();
+  input.dataset.maxTokens = String(modelMetadata.get(preferred)?.max_tokens || "");  modelCombo.updateClear();  updateModelLimitHint();
 }
 
 function getFilteredModels(query) {
@@ -347,74 +323,122 @@ function getFilteredModels(query) {
   return all.filter((name) => name.toLowerCase().includes(q));
 }
 
-function openComboDropdown() {
-  const dropdown = $("model-dropdown");
-  if (!dropdown) return;
-  const input = $("model");
-  const query = input.value.trim();
-  const filtered = getFilteredModels(query);
-  comboActiveIndex = -1;
+// Searchable model combo box. Both the model-under-test and the judge inputs
+// share this behaviour; they differ only in the DOM ids and the side effect
+// run after a pick (`onSelect`). Each instance keeps its own active-row index.
+function createCombo({ inputId, dropdownId, clearId, onSelect }) {
+  let activeIndex = -1;
 
-  if (!filtered.length) {
-    dropdown.innerHTML = '<div class="combo-empty">No models match.</div>';
+  const options = () => {
+    const dropdown = $(dropdownId);
+    return dropdown ? Array.from(dropdown.querySelectorAll(".combo-option")) : [];
+  };
+
+  function open() {
+    const dropdown = $(dropdownId);
+    if (!dropdown) return;
+    const filtered = getFilteredModels($(inputId).value.trim());
+    activeIndex = -1;
+
+    if (!filtered.length) {
+      dropdown.innerHTML = '<div class="combo-empty">No models match.</div>';
+      dropdown.hidden = false;
+      return;
+    }
+
+    dropdown.innerHTML = filtered
+      .map((name, i) => {
+        const meta = modelMetadata.get(name) || {};
+        const maxTokens = meta.max_tokens == null ? "" : String(meta.max_tokens);
+        return `<div class="combo-option" data-value="${escapeHtml(name)}" data-max-tokens="${escapeHtml(maxTokens)}" data-index="${i}">${escapeHtml(name)}</div>`;
+      })
+      .join("");
     dropdown.hidden = false;
-    return;
+
+    dropdown.querySelectorAll(".combo-option").forEach((opt) => {
+      opt.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        select(opt.dataset.value, opt.dataset.maxTokens);
+      });
+    });
   }
 
-  dropdown.innerHTML = filtered
-    .map((name, i) => {
-      const meta = modelMetadata.get(name) || {};
-      const maxTokens = meta.max_tokens == null ? "" : String(meta.max_tokens);
-      return `<div class="combo-option" data-value="${escapeHtml(name)}" data-max-tokens="${escapeHtml(maxTokens)}" data-index="${i}">${escapeHtml(name)}</div>`;
-    })
-    .join("");
-  dropdown.hidden = false;
+  function close() {
+    const dropdown = $(dropdownId);
+    if (dropdown) dropdown.hidden = true;
+    activeIndex = -1;
+  }
 
-  dropdown.querySelectorAll(".combo-option").forEach((opt) => {
-    opt.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      selectComboOption(opt.dataset.value, opt.dataset.maxTokens);
-    });
+  function updateClear() {
+    const btn = $(clearId);
+    if (btn) btn.hidden = !$(inputId).value;
+  }
+
+  function select(name, maxTokens) {
+    const input = $(inputId);
+    input.value = name;
+    input.dataset.maxTokens = maxTokens || "";
+    close();
+    onSelect();
+    updateClear();
+  }
+
+  function move(dir) {
+    const dropdown = $(dropdownId);
+    if (!dropdown || dropdown.hidden) return;
+    const opts = options();
+    if (!opts.length) return;
+    activeIndex = (activeIndex + dir + opts.length) % opts.length;
+    opts.forEach((o, i) => o.classList.toggle("active", i === activeIndex));
+    opts[activeIndex].scrollIntoView({ block: "nearest" });
+  }
+
+  function confirm() {
+    const dropdown = $(dropdownId);
+    if (!dropdown || dropdown.hidden) return;
+    const opt = options()[activeIndex];
+    if (opt) select(opt.dataset.value, opt.dataset.maxTokens);
+  }
+
+  function clear() {
+    const input = $(inputId);
+    input.value = "";
+    input.dataset.maxTokens = "";
+    onSelect();
+    updateClear();
+    input.focus();
+    open();
+  }
+
+  return { open, close, updateClear, select, move, confirm, clear };
+}
+
+// Both combos refresh the token-budget hints after any change; empty judge
+// input keeps the "(same as test)" default the backend already understands.
+const modelCombo = createCombo({
+  inputId: "model", dropdownId: "model-dropdown", clearId: "model-clear",
+  onSelect: updateModelLimitHint,
+});
+const judgeCombo = createCombo({
+  inputId: "judge_model", dropdownId: "judge-dropdown", clearId: "judge-clear",
+  onSelect: updateModelLimitHint,
+});
+
+function wireCombo(combo, inputId, clearId) {
+  const input = $(inputId);
+  input.addEventListener("input", () => { combo.open(); updateModelLimitHint(); combo.updateClear(); });
+  input.addEventListener("focus", () => combo.open());
+  input.addEventListener("blur", () => setTimeout(() => combo.close(), 150));
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); combo.move(1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); combo.move(-1); }
+    else if (e.key === "Enter") { e.preventDefault(); combo.confirm(); }
+    else if (e.key === "Escape") { combo.close(); }
   });
-}
-
-function closeComboDropdown() {
-  const dropdown = $("model-dropdown");
-  if (dropdown) dropdown.hidden = true;
-  comboActiveIndex = -1;
-}
-
-function updateComboClear() {
-  const btn = $("model-clear");
-  if (!btn) return;
-  btn.hidden = !$("model").value;
-}
-
-function selectComboOption(name, maxTokens) {
-  const input = $("model");
-  input.value = name;
-  input.dataset.maxTokens = maxTokens || "";
-  closeComboDropdown();
-  updateModelLimitHint();
-  updateComboClear();
-}
-
-function moveComboActive(dir) {
-  const dropdown = $("model-dropdown");
-  if (!dropdown || dropdown.hidden) return;
-  const opts = Array.from(dropdown.querySelectorAll(".combo-option"));
-  if (!opts.length) return;
-  comboActiveIndex = (comboActiveIndex + dir + opts.length) % opts.length;
-  opts.forEach((o, i) => o.classList.toggle("active", i === comboActiveIndex));
-  opts[comboActiveIndex].scrollIntoView({ block: "nearest" });
-}
-
-function confirmComboActive() {
-  const dropdown = $("model-dropdown");
-  if (!dropdown || dropdown.hidden) return;
-  const opts = dropdown.querySelectorAll(".combo-option");
-  const opt = opts[comboActiveIndex];
-  if (opt) selectComboOption(opt.dataset.value, opt.dataset.maxTokens);
+  const clearBtn = $(clearId);
+  if (clearBtn) {
+    clearBtn.addEventListener("mousedown", (e) => { e.preventDefault(); combo.clear(); });
+  }
 }
 
 function formatTokenBudget(meta, emptyMessage) {
