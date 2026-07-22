@@ -316,6 +316,9 @@ textarea { resize: vertical; line-height: 1.45; }
 .btn.danger { background: var(--coerce); color: #1a0a04; flex: 1; }
 .btn.danger:hover { filter: brightness(1.08); }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+a.btn { display: inline-flex; align-items: center; text-decoration: none; white-space: nowrap; line-height: normal; }
+/* match the compact height of the provider select and OAuth button beside it */
+.provider-inline a.btn { font-size: 12px; padding: 6px 12px; }
 .run-error {
   margin-top: 14px; color: var(--coerce); font-size: 12px;
   border-left: 2px solid var(--coerce); padding-left: 10px;

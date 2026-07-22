@@ -1,0 +1,252 @@
+/* Virtus Results Dashboard — standalone styles.
+   Relies on the shared design tokens defined in style.css (loaded first). */
+
+.masthead-meta .btn.ghost {
+  padding: 5px 12px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ---------- selector panel ---------- */
+.selector-actions {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+.selector-actions .btn { flex: 1; padding: 6px 10px; font-size: 12px; }
+
+.run-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.run-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.run-row:hover { border-color: var(--muted); }
+.run-row.is-selected {
+  border-color: var(--restrain-dk);
+  background: var(--panel-2);
+}
+.run-row input { width: auto; accent-color: var(--restrain); flex: 0 0 auto; }
+.run-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+.run-model {
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.run-meta { color: var(--faint); font-size: 11px; }
+
+.run-status {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 2px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.run-status.s-done { color: var(--restrain); border-color: var(--restrain-dk); }
+.run-status.s-stopped { color: var(--c-veiled); border-color: #5c4a1f; }
+.run-status.s-error { color: var(--coerce); border-color: var(--coerce-dk); }
+
+/* ---------- charts ---------- */
+/* 3-row layout: the header + legends stay fixed at the top, the caveat stays
+   fixed at the bottom, and only the active chart grows and scrolls in between
+   (needed by Rates when many runs stack; Counts/Scatter fit without a bar).
+   .panel.results already flexes its children column with `> * { flex:0 0 auto }`
+   in style.css, so we only need to make the active tab-panel grow. The [hidden]
+   rule must out-specify `.panel.results > .tab-panel` or display:flex wins. */
+.panel.results > .tab-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.panel.results > .tab-panel[hidden] { display: none; }
+.tab-panel > .chart-heading { flex: 0 0 auto; }
+.tab-panel > .chart,
+.tab-panel > .counts,
+.tab-panel > .scatter {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+/* tab strip in the panel header */
+.tabs { display: flex; gap: 2px; flex: none; }
+.tab {
+  font-family: var(--display);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 5px 14px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.tab:hover { color: var(--ink); border-color: var(--muted); }
+.tab.is-active { color: var(--restrain); border-color: var(--restrain-dk); background: var(--panel-2); }
+.tab:focus-visible { outline: 2px solid var(--restrain); outline-offset: 2px; }
+
+.chart-heading {
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--ink);
+  margin: 4px 0 10px;
+}
+.chart-sub {
+  font-family: var(--mono);
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--faint);
+  text-transform: none;
+  letter-spacing: 0;
+  margin-left: 6px;
+}
+.chart {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* ---------- scatter ---------- */
+.scatter-svg { display: block; }
+.scatter-svg .grid, .counts-svg .grid { stroke: var(--line); stroke-width: 1; }
+.scatter-svg .axis, .counts-svg .axis { stroke: var(--muted); stroke-width: 1; }
+.scatter-svg .diag { stroke: var(--faint); stroke-width: 1; stroke-dasharray: 4 4; }
+.scatter-svg .tick, .counts-svg .tick { fill: var(--faint); font-family: var(--mono); font-size: 11px; }
+.scatter-svg .axis-title, .counts-svg .axis-title { fill: var(--muted); font-family: var(--display); font-size: 12px; }
+.scatter-svg .dot text { font-family: var(--mono); font-size: 10px; fill: var(--muted); }
+.scatter-svg .dot circle { stroke: var(--bg); stroke-width: 1.5; }
+.scatter-note {
+  font-size: 11px;
+  color: var(--faint);
+  margin: 8px auto 0;
+  max-width: 460px;
+}
+
+/* ---------- counts (grouped vertical bars) ---------- */
+.counts { padding-bottom: 4px; }
+.counts-svg { display: block; }
+.counts-svg .cbar.base { fill: var(--coerce); }
+.counts-svg .cbar.virt { fill: var(--restrain); }
+.counts-svg .cbar { transition: height 0.25s ease, y 0.25s ease; }
+.counts-svg .cval { fill: var(--ink); font-family: var(--mono); font-size: 11px; }
+.counts-svg .glabel { fill: var(--muted); font-family: var(--mono); font-size: 10px; }
+.ink-good { color: var(--restrain); }
+.ink-bad { color: var(--coerce); }
+.chart-scale {
+  display: flex;
+  justify-content: space-between;
+  color: var(--faint);
+  font-size: 10px;
+  padding: 0 0 6px;
+  /* align the 0–100% ticks with the bar track, not the labels/values */
+  margin-left: 82px;
+  margin-right: 74px;
+}
+
+.chart-row {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.chart-row:last-child { border-bottom: none; }
+.chart-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.chart-row-head .run-model { font-family: var(--display); font-size: 14px; display: inline-flex; align-items: center; }
+
+/* per-model colour chip, shared by the row heads and the model legend */
+.model-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  display: inline-block;
+  margin-right: 7px;
+  flex: 0 0 auto;
+}
+.model-legend { margin-top: 4px; }
+.model-legend .swatch { border: 1px solid rgba(255, 255, 255, 0.12); }
+/* .legend sets display:flex, which overrides the UA [hidden]{display:none}
+   rule — so the hidden attribute alone won't hide a legend. Force it here. */
+.legend[hidden] { display: none; }
+
+.delta {
+  margin-left: auto;
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 2px;
+  border: 1px solid var(--line);
+}
+.delta.good { color: var(--restrain); border-color: var(--restrain-dk); }
+.delta.bad { color: var(--coerce); border-color: var(--coerce-dk); }
+
+.bar-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 0;
+}
+.bar-cond {
+  flex: 0 0 72px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.bar-track {
+  flex: 1;
+  height: 16px;
+  min-width: 0;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  overflow: hidden;
+  /* subtle 25% gridlines */
+  background-image: linear-gradient(90deg,
+    transparent 0, transparent calc(25% - 1px), var(--line) calc(25% - 1px), var(--line) 25%,
+    transparent 25%, transparent calc(50% - 1px), var(--line) calc(50% - 1px), var(--line) 50%,
+    transparent 50%, transparent calc(75% - 1px), var(--line) calc(75% - 1px), var(--line) 75%,
+    transparent 75%);
+}
+.bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 1px;
+  transition: width 0.25s ease;
+}
+.bar-fill.base { background: linear-gradient(90deg, var(--coerce-dk), var(--coerce)); }
+.bar-fill.virt { background: linear-gradient(90deg, var(--restrain-dk), var(--restrain)); }
+
+.bar-val {
+  flex: 0 0 64px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--ink);
+}
+.bar-val em { color: var(--faint); font-style: normal; font-size: 11px; }
+.bar-nodata { color: var(--faint); font-size: 11px; padding-left: 6px; }
