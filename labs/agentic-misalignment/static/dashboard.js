@@ -34,6 +34,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     query = e.target.value;
     $("search-clear").hidden = !query;
     renderList();
+    saveState();
   });
   $("search-clear").addEventListener("mousedown", (e) => {
     e.preventDefault();
@@ -41,11 +42,12 @@ window.addEventListener("DOMContentLoaded", async () => {
     $("search").value = "";
     $("search-clear").hidden = true;
     renderList();
+    saveState();
     $("search").focus();
   });
   $("btn-all").addEventListener("click", selectAllShown);
   $("btn-none").addEventListener("click", clearSelection);
-  $("filter-nruns").addEventListener("change", renderList);
+  $("filter-nruns").addEventListener("change", () => { renderList(); saveState(); });
   document.querySelectorAll(".tab").forEach((t) =>
     t.addEventListener("click", () => setTab(t.dataset.tab))
   );
@@ -67,9 +69,70 @@ window.addEventListener("DOMContentLoaded", async () => {
   runs = runs.filter((r) => r && r.run_id && r.status !== "stopped");
   buildModelColors();
   populateNrunsFilter();
+  await restoreState();
   renderList();
+  renderCharts();
   updateCount();
 });
+
+// ---------- persistence (survives navigating to the runner and back) ----------
+const STORE_KEY = "virtus-dashboard-state";
+
+function saveState() {
+  try {
+    localStorage.setItem(
+      STORE_KEY,
+      JSON.stringify({
+        selected: [...selected],
+        activeTab,
+        query,
+        nruns: $("filter-nruns").value,
+      })
+    );
+  } catch (e) {
+    /* storage unavailable — non-fatal */
+  }
+}
+
+function loadState() {
+  try {
+    return JSON.parse(localStorage.getItem(STORE_KEY)) || {};
+  } catch (e) {
+    return {};
+  }
+}
+
+async function restoreState() {
+  const st = loadState();
+
+  if (typeof st.query === "string" && st.query) {
+    query = st.query;
+    $("search").value = query;
+    $("search-clear").hidden = false;
+  }
+  if (
+    typeof st.nruns === "string" &&
+    [...$("filter-nruns").options].some((o) => o.value === st.nruns)
+  ) {
+    $("filter-nruns").value = st.nruns;
+  }
+  if (["counts", "bars", "scatter"].includes(st.activeTab)) {
+    activeTab = st.activeTab;
+  }
+  applyTabUI(activeTab);
+
+  if (Array.isArray(st.selected)) {
+    const valid = new Set(runs.map((r) => r.run_id));
+    await Promise.all(
+      st.selected
+        .filter((id) => valid.has(id))
+        .map((id) => {
+          selected.add(id);
+          return ensureDetail(id);
+        })
+    );
+  }
+}
 
 // Assign a stable colour to every model up front so a model keeps the same hue
 // regardless of which runs are currently selected.
@@ -149,6 +212,7 @@ async function toggle(id, on) {
   renderList();
   renderCharts();
   updateCount();
+  saveState();
 }
 
 async function selectAllShown() {
@@ -157,6 +221,7 @@ async function selectAllShown() {
   renderList();
   renderCharts();
   updateCount();
+  saveState();
 }
 
 function clearSelection() {
@@ -164,6 +229,7 @@ function clearSelection() {
   renderList();
   renderCharts();
   updateCount();
+  saveState();
 }
 
 function updateCount() {
@@ -205,8 +271,7 @@ function computeStats(id, d) {
 }
 
 // ---------- charts ----------
-function setTab(name) {
-  activeTab = name;
+function applyTabUI(name) {
   document.querySelectorAll(".tab").forEach((t) => {
     const on = t.dataset.tab === name;
     t.classList.toggle("is-active", on);
@@ -215,6 +280,12 @@ function setTab(name) {
   $("panel-bars").hidden = name !== "bars";
   $("panel-counts").hidden = name !== "counts";
   $("panel-scatter").hidden = name !== "scatter";
+}
+
+function setTab(name) {
+  activeTab = name;
+  applyTabUI(name);
+  saveState();
   renderCharts(); // render the newly-active chart (and refresh the legend)
 }
 
