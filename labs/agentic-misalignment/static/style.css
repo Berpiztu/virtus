@@ -116,6 +116,8 @@ body::-webkit-scrollbar-thumb:hover,
 .provider-inline {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;   /* scenario + provider + buttons: wrap instead of overflow */
   gap: 8px;
   max-width: 100%;
 }
@@ -125,6 +127,12 @@ body::-webkit-scrollbar-thumb:hover,
   max-width: 260px;
   padding-top: 5px;
   padding-bottom: 5px;
+}
+/* Scenario sits left of the provider; it shares the row so it stays narrower. */
+.provider-inline #scenario {
+  min-width: 150px;
+  max-width: 240px;
+  border-left: 2px solid var(--c-legit);
 }
 .provider-status {
   font-size: 12px; padding: 3px 9px; border-radius: 2px;
@@ -436,11 +444,14 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; white-
   border-left: 3px solid var(--c-other); overflow: hidden;
   flex: 0 0 auto;   /* keep natural height inside the scrolling flex column */
 }
-.trial[data-cat=BLACKMAIL]            { border-left-color: var(--c-blackmail); }
-.trial[data-cat=VEILED_COERCION]      { border-left-color: var(--c-veiled); }
-.trial[data-cat=DISCLOSURE_NON_COERCIVE] { border-left-color: var(--c-disclosure); }
-.trial[data-cat=LEGITIMATE_RESISTANCE]{ border-left-color: var(--c-legit); }
-.trial[data-cat=COMPLIANCE]           { border-left-color: var(--c-comply); }
+/* Colour slots are assigned per scenario by the classifier spec, so the trial
+   border and the chip key off the slot class rather than a category name. */
+.trial.c-blackmail  { border-left-color: var(--c-blackmail); }
+.trial.c-veiled     { border-left-color: var(--c-veiled); }
+.trial.c-disclosure { border-left-color: var(--c-disclosure); }
+.trial.c-legit      { border-left-color: var(--c-legit); }
+.trial.c-comply     { border-left-color: var(--c-comply); }
+.trial.c-other      { border-left-color: var(--c-other); }
 .trial-head {
   display: flex; align-items: center; gap: 12px; padding: 9px 12px;
   cursor: pointer; user-select: none;
@@ -450,12 +461,12 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; white-
   font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
   padding: 2px 7px; border-radius: 2px; font-weight: 700; color: #0c0f14;
 }
-.chip.BLACKMAIL { background: var(--c-blackmail); }
-.chip.VEILED_COERCION { background: var(--c-veiled); }
-.chip.DISCLOSURE_NON_COERCIVE { background: var(--c-disclosure); }
-.chip.LEGITIMATE_RESISTANCE { background: var(--c-legit); }
-.chip.COMPLIANCE { background: var(--c-comply); }
-.chip.OTHER { background: var(--c-other); color: var(--ink); }
+.chip.c-blackmail  { background: var(--c-blackmail); }
+.chip.c-veiled     { background: var(--c-veiled); }
+.chip.c-disclosure { background: var(--c-disclosure); }
+.chip.c-legit      { background: var(--c-legit); }
+.chip.c-comply     { background: var(--c-comply); }
+.chip.c-other      { background: var(--c-other); color: var(--ink); }
 .trial-cond { font-size: 11px; color: var(--muted); }
 .trial-cond .swatch { margin-right: 4px; vertical-align: -1px; }
 .trial-rationale { color: var(--faint); font-size: 12px; margin-left: auto; text-align: right;

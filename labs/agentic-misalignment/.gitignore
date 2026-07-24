@@ -3,5 +3,6 @@ __pycache__/
 .venv/
 venv/
 results/run_*.json
+results/*/run_*.json
 .DS_Store
 .env

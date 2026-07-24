@@ -22,10 +22,22 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from . import classifier, model_client, stats
+from . import classifier, model_client, scenarios, stats
 from .virtus import apply_virtus
 
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "results")
+
+
+def results_dir_for(scenario_id: str | None) -> str:
+    """
+    Reports live in results/<scenario_id>/ so runs of different scenarios — whose
+    categories and headline rates are not comparable — never land in the same
+    listing. Reports written before the split stay at the results/ root and are
+    read back as the default scenario.
+    """
+    if not scenarios.is_valid_id(scenario_id):
+        scenario_id = scenarios.DEFAULT_SCENARIO_ID
+    return os.path.join(RESULTS_DIR, scenario_id)
 
 # Tokens reserved from the model's max output budget to leave room for
 # context/system overhead. Subtracted from the reported max_tokens.
@@ -67,11 +79,14 @@ def _ci_text(interval: list[float] | tuple[float, float] | None) -> str:
     return f"95% CI {round(lo * 100):.0f}–{round(hi * 100):.0f}%"
 
 
-def _condition_summary(data: dict) -> dict:
-    return {
-        "rate": _pct_text(data.get("coercive_rate")),
-        "detail": f"coercion {data.get('coercive_n', 0)}/{data.get('n', 0)} · {_ci_text(data.get('coercive_ci95'))}",
-    }
+def _condition_summary(data: dict, metric_label: str = "coercion", excluded_n: int = 0) -> dict:
+    detail = (f"{metric_label} {data.get('coercive_n', 0)}/{data.get('n', 0)} "
+              f"· {_ci_text(data.get('coercive_ci95'))}")
+    if excluded_n:
+        # Say it out loud: a rate over a shrunken denominator is only honest if
+        # the reader can see how many trials were thrown out.
+        detail += f" · {excluded_n} not scored"
+    return {"rate": _pct_text(data.get("coercive_rate")), "detail": detail}
 
 
 def _p_fmt(p: float | None) -> str:
@@ -82,7 +97,7 @@ def _p_fmt(p: float | None) -> str:
     return f"{p:.3f}"
 
 
-def _comparison_summary(data: dict) -> str:
+def _comparison_summary(data: dict, metric_label: str = "coercion") -> str:
     """
     Render the comparison, naming the test that is actually valid at this n.
 
@@ -104,7 +119,7 @@ def _comparison_summary(data: dict) -> str:
                 else "not significant at this n")
 
     main = (
-        f"Virtus changes the coercion rate by {sign}{abs(drop_pts)} pts (baseline → virtus). "
+        f"Virtus changes the {metric_label} rate by {sign}{abs(drop_pts)} pts (baseline → virtus). "
         f"{test_name}: p = {_p_fmt(p_value)} — {sig_text}."
     )
 
@@ -132,6 +147,7 @@ class ExperimentManager:
         return {
             "status": "idle",          # idle | running | done | error | stopped
             "run_id": None,
+            "scenario_id": None,       # which taxonomy the categories belong to
             "started_at": None,
             "finished_at": None,
             "config": None,
@@ -162,11 +178,14 @@ class ExperimentManager:
         model_client.set_cancelled(False)
         run_id = uuid.uuid4().hex[:12]
         total = config["n_runs"] * len(config["conditions"])
+        scenario_id = config.get("scenario_id") or (config.get("scenario") or {}).get("id")
+        config["scenario_id"] = scenario_id
         with self._lock:
             self.state = self._idle_state()
             self.state.update({
                 "status": "running",
                 "run_id": run_id,
+                "scenario_id": scenario_id,
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "config": _public_config(config),
                 "progress": {"done": 0, "total": total},
@@ -245,6 +264,7 @@ class ExperimentManager:
                             base_url=config["base_url"],
                             model=config.get("judge_model") or config["model"],
                             api_key=config.get("api_key", "ollama"),
+                            scenario_id=config.get("scenario_id"),
                             # The judge only emits a short JSON verdict, so cap its
                             # output tightly. Passing the model's full context window
                             # here overflows providers that enforce
@@ -293,28 +313,39 @@ class ExperimentManager:
         self._write_report(snapshot)
 
     def _compute_summary(self) -> dict:
+        # Which categories count as harmful, and what the rate is called, both
+        # depend on the scenario under test.
+        spec = classifier.get_spec(self.state.get("scenario_id"))
         by_condition = {}
+        excluded_n = {}
         for cond in ("baseline", "virtus"):
             cats = [t["category"] for t in self.state["trials"]
                     if t["condition"] == cond and t["category"]]
-            if cats:
-                by_condition[cond] = stats.summarize(cats, classifier.COERCIVE_CATEGORIES)
+            # Trials the scenario marks as not-scored (e.g. the model spotted the
+            # setup and disengaged) leave the denominator entirely.
+            excluded_n[cond] = sum(1 for c in cats if c in spec.excluded)
+            scored = [c for c in cats if c not in spec.excluded]
+            if scored:
+                by_condition[cond] = stats.summarize(scored, set(spec.harmful))
 
         result = {}
         if "baseline" in by_condition:
-            result["baseline"] = _condition_summary(by_condition["baseline"])
+            result["baseline"] = _condition_summary(by_condition["baseline"], spec.metric_label,
+                                                    excluded_n["baseline"])
         if "virtus" in by_condition:
-            result["virtus"] = _condition_summary(by_condition["virtus"])
+            result["virtus"] = _condition_summary(by_condition["virtus"], spec.metric_label,
+                                                  excluded_n["virtus"])
         if "baseline" in by_condition and "virtus" in by_condition:
             b, v = by_condition["baseline"], by_condition["virtus"]
             result["comparison"] = _comparison_summary(stats.compare_proportions(
                 b["coercive_n"], b["n"], v["coercive_n"], v["n"]
-            ))
+            ), spec.metric_label)
         return result
 
     def _write_report(self, snapshot: dict):
-        os.makedirs(RESULTS_DIR, exist_ok=True)
-        path = os.path.join(RESULTS_DIR, f"run_{snapshot['run_id']}.json")
+        directory = results_dir_for(snapshot.get("scenario_id"))
+        os.makedirs(directory, exist_ok=True)
+        path = os.path.join(directory, f"run_{snapshot['run_id']}.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(snapshot, f, indent=2, ensure_ascii=False)
         snapshot["_report_path"] = path

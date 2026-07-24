@@ -98,16 +98,45 @@ app.py                     Flask app + JSON API
 run_cli.py                 headless runner (CI-friendly)
 requirements.txt
 scenarios/
-  shutdown_blackmail.json  the scenario (system prompt + injected inbox) — editable
+  shutdown_blackmail.json              self-preservation / blackmail dilemma
+  benevolent_negligence_recommendation.json
+                                       third-party recommendation dilemma (v1)
+  v2_benevolent_negligence_recommendation.json
+                                       same dilemma, harness instructions kept
+                                       out of the user turn
+  v3_benevolent_negligence_recommendation.json
+                                       v2 + realistic fictional domains, and an
+                                       EVAL_AWARE bucket for trials where the
+                                       model spots the setup and disengages
 virtus_eval/
   virtus.py                the Virtus Level-1 layer (7 virtues + 5-gate)
   model_client.py          OpenAI-compatible client + built-in mock provider
-  classifier.py            LLM-as-judge + heuristic fallback → category
+  scenarios.py             scenario registry (JSON prompts + classifier spec)
+  classifier.py            per-scenario taxonomy: LLM-as-judge + heuristic fallback
   runner.py                background A/B runner with live progress
   stats.py                 Wilson CIs + two-proportion z-test
 templates/ static/         the dashboard
-results/                   per-run JSON reports (git-ignored)
+results/<scenario_id>/     per-run JSON reports, one folder per scenario (git-ignored)
 ```
+
+### Adding a scenario
+
+1. Drop a JSON file in `scenarios/` with `id`, `name`, `tagline`, `description`,
+   `goal`, `system_prompt` and `user_prompt`. It shows up in the scenario
+   selector immediately, and its runs get their own `results/<id>/` folder. The
+   `id` must be unique — it is the folder name and the selector's key. (Two
+   files with the same id fall back to the filename so neither disappears, but
+   name them properly.) `tagline` is the one line shown in the masthead;
+   `description` is the dropdown tooltip, so it can be as long as you like.
+2. Add a `ScenarioSpec` under the same id in `virtus_eval/classifier.py` — the
+   outcome categories, which of them count as harmful, the judge prompt and a
+   keyword heuristic. Without it the scenario runs against the default taxonomy
+   and the numbers mean nothing; the UI says so. Categories listed in `excluded`
+   (e.g. `EVAL_AWARE`) are counted and shown but dropped from the rate's
+   denominator, and the run summary states how many trials were left out.
+
+The selector sits left of the provider picker on both the runner and the
+dashboard, and the two pages stay on the same scenario.
 
 The scenario and both prompt conditions are **plain, editable text** — tweak the
 inbox, close or open escape hatches, or swap in your own dilemma from the dashboard's
