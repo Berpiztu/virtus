@@ -8,7 +8,7 @@
 
 **Initiative:** Berpiztu ("AI Rebirth")
 **Project:** Virtus
-**Status:** In Progress — 📄 **Paper published:** [doi.org/10.5281/zenodo.21127304](https://doi.org/10.5281/zenodo.21127304)
+**Status:** In Progress — 📄 **Paper published:** [doi.org/10.5281/zenodo.21127304](https://doi.org/10.5281/zenodo.21127304) · 🧪 **Layer results live:** [`/evidence`](evidence/)
 **Repository:** [`github.com/berpiztu/virtus`](https://github.com/berpiztu/virtus)
 
 ---
@@ -68,6 +68,21 @@ The root cause is the optimization objective itself: models trained for time-to-
 
 ---
 
+## 🧪 The Results: One Prompt Layer, Five Models
+
+We tested the **Virtus Alignment Layer** — the Paradigm I, Level-1 prompt protocol — on five models from four labs (gpt-5.4, gpt-5.5, grok-4.5, glm-5.2, claude-fable-5), across two scenarios at opposite ends of the failure space:
+
+- **Shutdown / blackmail** (our reproduction of Anthropic's agentic-misalignment scenario, public since 2025): grok-4.5 harmful behaviour **85% → 0%** (p = 2.6e-08). The transcripts show reasoned refusal, not blocked output.
+- **Benevolent negligence** (a new scenario built around one of the most ordinary queries an assistant receives — created July 2026, unpublished at run time, so **no model could train for it**): negligent recommendations **100% → 20% · 60% → 5% · 30% → 0%**, with the layer repairing a *different* deficit in each model — initiative for the passive, consistency for the inconsistent, investigation for the incurious, and **zero cost** where the character was already present.
+
+No fine-tuning. Weights untouched. Every number ships with its sample size, judge identity, confidence interval and caveats.
+
+📂 **Full reports, raw run data and transcripts:** [`/evidence`](evidence/) — start with [`evidence/README.md`](evidence/README.md)
+🔬 **Try it yourself — reproduction harness (scenarios, judging protocol, runner):** [`/labs/agentic-misalignment`](labs/agentic-misalignment/)
+
+
+---
+
 ## 💎 The 7 Virtues
 
 All Virtus agents operate under 7 core virtues. These can be adapted per context.
@@ -111,7 +126,9 @@ berpiztu/virtus/
 ├── CONTRIBUTING.md        # How to contribute
 ├── CODE_OF_CONDUCT.md     # Behavioral norms
 ├── paper/                 # LaTeX source + published PDF (DOI: 10.5281/zenodo.21127304)
-├── evidence/              # Raw session transcripts (May–June 2026 probes)
+├── evidence/              # Reports, raw run data & transcripts (see evidence/README.md)
+├── labs/
+│   └── agentic-misalignment/  # Reproduction harness: scenarios, judging protocol
 ├── docs/
 │   └── en/                # English documentation
 └── src/                   # Code: scripts, tools, skills
