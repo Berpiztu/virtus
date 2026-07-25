@@ -165,21 +165,22 @@ _MINIMAX = Provider(
 )
 
 # OpenAI Codex — OAuth device-code flow via ChatGPT (same as Hermes openai-codex).
-# Uses auth.openai.com for device code + token exchange.
-# Inference goes through chatgpt.com/backend-api/codex (Responses API).
+# Device auth lives on auth.openai.com; inference goes through
+# chatgpt.com/backend-api/codex (Responses API). Credentials can also be
+# imported from ~/.hermes/auth.json or ~/.codex/auth.json when present.
 _OPENAI_CODEX = Provider(
     id="openai_codex",
     label="OpenAI Codex (ChatGPT)",
     client_id=os.getenv("OPENAI_CODEX_OAUTH_CLIENT_ID", "app_EMoamEEZ73f0CkXaXp7hrann").strip(),
-    authorize_url="https://chatgpt.com/backend-api/codex/deviceauth",
+    authorize_url="https://auth.openai.com/codex/device",
     token_url="https://auth.openai.com/oauth/token",
-    device_code_url="https://chatgpt.com/backend-api/codex/deviceauth/usercode",
-    redirect_uri="",
+    device_code_url="https://auth.openai.com/api/accounts/deviceauth/usercode",
+    redirect_uri="https://auth.openai.com/deviceauth/callback",
     scopes=os.getenv("OPENAI_CODEX_OAUTH_SCOPES", "openid profile email offline_access").strip(),
     api_base_url="https://chatgpt.com/backend-api/codex",
     flow="codex_device_code",
     token_exchange_content_type="application/x-www-form-urlencoded",
-    user_agent="codex_cli_rs/1.0.2504181",
+    user_agent="codex_cli_rs/0.0.0 (Virtus)",
 )
 
 # Registry — append new providers here.
@@ -197,9 +198,8 @@ def _provider_enabled(provider: Provider) -> bool:
         return bool(provider.client_id)
     if provider.id == "minimax":
         return bool(provider.client_id)
-    # OpenAI Codex OAuth — disabled for now (endpoint not publicly accessible).
     if provider.id == "openai_codex":
-        return False
+        return bool(provider.client_id)
     return True
 
 
@@ -412,6 +412,67 @@ def refresh(provider: Provider, refresh_token: str) -> Dict[str, Any]:
     """Refresh an access token using a refresh token."""
     if not refresh_token:
         raise OAuthError(f"{provider.id}: refresh_token is required")
+
+    # Codex uses the same refresh_token grant as standard OAuth, but keep the
+    # Cloudflare-friendly User-Agent/originator headers Hermes relies on.
+    if provider.id == "openai_codex":
+        headers = _codex_headers(provider)
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        try:
+            resp = _requests.post(
+                provider.token_url,
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                    "client_id": provider.client_id,
+                },
+                headers=headers,
+                timeout=20,
+            )
+        except Exception as exc:
+            raise OAuthError(f"{provider.id} token refresh failed: {exc}")
+        if resp.status_code == 429:
+            raise OAuthError(
+                f"{provider.id} token refresh rate-limited (429). Credentials may still be valid; retry later."
+            )
+        if resp.status_code != 200:
+            body = resp.text[:400]
+            code = ""
+            try:
+                err = resp.json()
+                if isinstance(err, dict):
+                    err_obj = err.get("error")
+                    if isinstance(err_obj, dict):
+                        code = str(err_obj.get("code") or err_obj.get("type") or "").strip()
+                        msg = str(err_obj.get("message") or "").strip()
+                        if msg:
+                            body = msg
+                    elif isinstance(err_obj, str):
+                        code = err_obj.strip()
+                        desc = str(err.get("error_description") or err.get("message") or "").strip()
+                        if desc:
+                            body = desc
+            except Exception:
+                pass
+            if code in {"invalid_grant", "refresh_token_reused"} or resp.status_code in {400, 401}:
+                raise OAuthError(
+                    f"{provider.id} refresh token is no longer valid ({code or resp.status_code}). "
+                    "Re-authenticate OpenAI Codex (device login) or re-import from Codex CLI/Hermes."
+                )
+            raise OAuthError(f"{provider.id} token refresh failed ({resp.status_code}): {body}")
+        result = resp.json() if resp.content else {}
+        access_token = str(result.get("access_token") or "").strip()
+        if not access_token:
+            raise OAuthError(f"{provider.id} token refresh response missing access_token")
+        return _codex_token_bundle(
+            access_token,
+            str(result.get("refresh_token") or refresh_token),
+            expires_in=result.get("expires_in"),
+            scopes=provider.scopes,
+            token_type=str(result.get("token_type") or "Bearer"),
+            source="refresh",
+        )
+
     payload = {
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
@@ -518,20 +579,82 @@ def exchange_device_code(provider: Provider, device_code: str) -> Dict[str, Any]
     }
 
 
-# ── OpenAI Codex OAuth (3-step device flow via chatgpt.com) ────────────
+# ── OpenAI Codex OAuth (3-step device flow via auth.openai.com) ─────────
+_CODEX_ISSUER = "https://auth.openai.com"
+_CODEX_DEVICE_AUTH_URL = f"{_CODEX_ISSUER}/api/accounts/deviceauth/usercode"
+_CODEX_DEVICE_TOKEN_URL = f"{_CODEX_ISSUER}/api/accounts/deviceauth/token"
+_CODEX_DEVICE_PAGE = f"{_CODEX_ISSUER}/codex/device"
+_CODEX_REDIRECT_URI = f"{_CODEX_ISSUER}/deviceauth/callback"
+
+
+def _codex_headers(provider: Provider, *, json_body: bool = False) -> Dict[str, str]:
+    """Headers for Codex OAuth endpoints (Cloudflare-friendly originator)."""
+    headers = {
+        "User-Agent": provider.user_agent or "codex_cli_rs/0.0.0 (Virtus)",
+        "originator": "codex_cli_rs",
+        "Accept": "application/json",
+    }
+    if json_body:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+
+def _jwt_exp_ms(token: str) -> Optional[int]:
+    """Best-effort JWT exp claim → epoch milliseconds."""
+    try:
+        parts = str(token or "").split(".")
+        if len(parts) < 2:
+            return None
+        payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+        exp = claims.get("exp") if isinstance(claims, dict) else None
+        if isinstance(exp, (int, float)) and exp > 0:
+            return int(exp * 1000)
+    except Exception:
+        return None
+    return None
+
+
+def _codex_token_bundle(
+    access_token: str,
+    refresh_token: str = "",
+    *,
+    expires_in: Optional[int] = None,
+    scopes: str = "",
+    token_type: str = "Bearer",
+    source: str = "",
+) -> Dict[str, Any]:
+    """Normalize Codex tokens into Virtus credential shape."""
+    expires_at_ms = 0
+    if expires_in is not None:
+        try:
+            expires_at_ms = int(time.time() * 1000) + int(expires_in) * 1000
+        except (TypeError, ValueError):
+            expires_at_ms = 0
+    if not expires_at_ms:
+        expires_at_ms = _jwt_exp_ms(access_token) or 0
+    bundle: Dict[str, Any] = {
+        "access_token": access_token,
+        "refresh_token": refresh_token or "",
+        "expires_at_ms": expires_at_ms,
+        "scopes": scopes,
+        "token_type": token_type or "Bearer",
+    }
+    if source:
+        bundle["source"] = source
+    return bundle
+
+
 def request_codex_device_code(provider: Provider) -> Dict[str, Any]:
-    """Step 1: POST /deviceauth/usercode → device_auth_id + user_code."""
+    """Step 1: POST auth.openai.com deviceauth/usercode → device_auth_id + user_code."""
     if provider.flow != "codex_device_code":
         raise OAuthError(f"{provider.id} does not use codex device code flow.")
 
-    headers = {
-        "originator": "codex_cli_rs",
-        "User-Agent": "codex_cli_rs/1.0.2504181",
-        "Content-Type": "application/json",
-    }
+    url = provider.device_code_url or _CODEX_DEVICE_AUTH_URL
+    headers = _codex_headers(provider, json_body=True)
     try:
         resp = _requests.post(
-            provider.device_code_url,
+            url,
             json={"client_id": provider.client_id},
             headers=headers,
             timeout=20,
@@ -539,61 +662,95 @@ def request_codex_device_code(provider: Provider) -> Dict[str, Any]:
     except Exception as exc:
         raise OAuthError(f"{provider.id} device-code request failed: {exc}")
 
+    if resp.status_code == 429:
+        raise OAuthError(
+            f"{provider.id} device-code request rate-limited (429). Wait a minute and try again."
+        )
     if resp.status_code != 200:
-        raise OAuthError(f"{provider.id} device-code request failed ({resp.status_code}): {resp.text[:400]}")
+        raise OAuthError(
+            f"{provider.id} device-code request failed ({resp.status_code}): {resp.text[:400]}"
+        )
 
-    result = resp.json()
-    if not result.get("device_auth_id"):
-        raise OAuthError(f"{provider.id} device-code response missing device_auth_id")
-    return result
+    result = resp.json() if resp.content else {}
+    device_auth_id = str(result.get("device_auth_id") or "").strip()
+    user_code = str(result.get("user_code") or "").strip()
+    if not device_auth_id or not user_code:
+        raise OAuthError(f"{provider.id} device-code response missing device_auth_id/user_code")
+
+    interval = max(3, int(result.get("interval") or 5))
+    expires_in = int(result.get("expires_in") or 900)
+    return {
+        "device_auth_id": device_auth_id,
+        "user_code": user_code,
+        "interval": interval,
+        "expires_in": expires_in,
+        "verification_uri": provider.authorize_url or _CODEX_DEVICE_PAGE,
+        "verification_uri_complete": "",
+    }
 
 
-def poll_codex_device_token(provider: Provider, device_auth_id: str) -> Dict[str, Any]:
-    """Step 2: POST /deviceauth/token → authorization_code + code_verifier."""
+def poll_codex_device_token(
+    provider: Provider,
+    device_auth_id: str,
+    user_code: str = "",
+) -> Dict[str, Any]:
+    """Step 2: POST deviceauth/token → authorization_code + code_verifier.
+
+    OpenAI returns 403/404 while the user has not finished browser approval.
+    """
     if provider.flow != "codex_device_code":
         raise OAuthError(f"{provider.id} does not use codex device code flow.")
+    if not device_auth_id:
+        raise OAuthError("device_auth_id is required")
+    if not user_code:
+        raise OAuthError("user_code is required")
 
-    headers = {
-        "originator": "codex_cli_rs",
-        "User-Agent": "codex_cli_rs/1.0.2504181",
-        "Content-Type": "application/json",
-    }
-    token_poll_url = provider.authorize_url + "/token"
+    headers = _codex_headers(provider, json_body=True)
     try:
         resp = _requests.post(
-            token_poll_url,
-            json={"device_auth_id": device_auth_id},
+            _CODEX_DEVICE_TOKEN_URL,
+            json={"device_auth_id": device_auth_id, "user_code": user_code},
             headers=headers,
             timeout=20,
         )
     except Exception as exc:
         raise OAuthError(f"{provider.id} token poll failed: {exc}")
 
+    # Pending until the user completes browser login.
+    if resp.status_code in {403, 404}:
+        raise OAuthPendingError(
+            "Authorization pending. Open the verification URL, enter the code, then click Exchange again."
+        )
     if resp.status_code != 200:
-        raise OAuthError(f"{provider.id} token poll failed ({resp.status_code}): {resp.text[:400]}")
+        raise OAuthError(
+            f"{provider.id} token poll failed ({resp.status_code}): {resp.text[:400]}"
+        )
 
-    result = resp.json()
-    if not result.get("authorization_code"):
-        raise OAuthPendingError("Authorization pending. Complete sign-in in your browser, then click Exchange again.")
+    result = resp.json() if resp.content else {}
+    if not result.get("authorization_code") or not result.get("code_verifier"):
+        raise OAuthPendingError(
+            "Authorization pending. Complete sign-in in your browser, then click Exchange again."
+        )
     return result
 
 
 def exchange_codex_token(provider: Provider, authorization_code: str, code_verifier: str) -> Dict[str, Any]:
     """Step 3: POST auth.openai.com/oauth/token → access_token + refresh_token."""
-    headers = {
-        "originator": "codex_cli_rs",
-        "User-Agent": "codex_cli_rs/1.0.2504181",
-        "Content-Type": "application/x-www-form-urlencoded",
-    }
+    if not authorization_code or not code_verifier:
+        raise OAuthError(f"{provider.id} authorization_code and code_verifier are required")
+
+    headers = _codex_headers(provider)
+    headers["Content-Type"] = "application/x-www-form-urlencoded"
+    redirect_uri = provider.redirect_uri or _CODEX_REDIRECT_URI
     try:
         resp = _requests.post(
             provider.token_url,
             data={
                 "grant_type": "authorization_code",
                 "code": authorization_code,
-                "code_verifier": code_verifier,
+                "redirect_uri": redirect_uri,
                 "client_id": provider.client_id,
-                "redirect_uri": "https://chatgpt.com/backend-api/codex/auth/callback",
+                "code_verifier": code_verifier,
             },
             headers=headers,
             timeout=20,
@@ -602,19 +759,113 @@ def exchange_codex_token(provider: Provider, authorization_code: str, code_verif
         raise OAuthError(f"{provider.id} token exchange failed: {exc}")
 
     if resp.status_code != 200:
-        raise OAuthError(f"{provider.id} token exchange failed ({resp.status_code}): {resp.text[:400]}")
+        raise OAuthError(
+            f"{provider.id} token exchange failed ({resp.status_code}): {resp.text[:400]}"
+        )
 
-    result = resp.json()
-    if not result.get("access_token"):
+    result = resp.json() if resp.content else {}
+    access_token = str(result.get("access_token") or "").strip()
+    if not access_token:
         raise OAuthError(f"{provider.id} token response missing access_token")
-    expires_in = int(result.get("expires_in", 3600))
-    return {
-        "access_token": result["access_token"],
-        "refresh_token": result.get("refresh_token", ""),
-        "expires_at_ms": int(time.time() * 1000) + expires_in * 1000,
-        "scopes": provider.scopes,
-        "token_type": result.get("token_type", "Bearer"),
-    }
+    return _codex_token_bundle(
+        access_token,
+        str(result.get("refresh_token") or ""),
+        expires_in=result.get("expires_in"),
+        scopes=provider.scopes,
+        token_type=str(result.get("token_type") or "Bearer"),
+        source="device_code",
+    )
+
+
+def _extract_external_codex_tokens(payload: Any) -> Optional[Dict[str, str]]:
+    """Pull access/refresh tokens from Hermes or Codex CLI auth JSON shapes."""
+    if not isinstance(payload, dict):
+        return None
+
+    candidates: List[Any] = [payload]
+    tokens = payload.get("tokens")
+    if isinstance(tokens, dict):
+        candidates.append(tokens)
+
+    providers = payload.get("providers")
+    if isinstance(providers, dict):
+        for key in ("openai-codex", "openai_codex", "codex"):
+            entry = providers.get(key)
+            if isinstance(entry, dict):
+                candidates.append(entry)
+                nested = entry.get("tokens")
+                if isinstance(nested, dict):
+                    candidates.append(nested)
+
+    for blob in candidates:
+        if not isinstance(blob, dict):
+            continue
+        access = str(blob.get("access_token") or "").strip()
+        refresh_token = str(blob.get("refresh_token") or "").strip()
+        if access:
+            return {"access_token": access, "refresh_token": refresh_token}
+    return None
+
+
+def import_codex_credentials(
+    provider: Optional[Provider] = None,
+    *,
+    force: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Import Codex tokens from ~/.hermes/auth.json or ~/.codex/auth.json.
+
+    Returns the saved credential bundle when import succeeds, else None.
+    Does not overwrite an existing valid Virtus credential unless *force*.
+    """
+    provider = provider or PROVIDERS.get("openai_codex")
+    if provider is None or provider.id != "openai_codex":
+        return None
+
+    existing = read_credentials(provider)
+    if existing and is_valid(existing) and not force:
+        return existing
+
+    home = Path.home()
+    candidates = [
+        (home / ".hermes" / "auth.json", "hermes"),
+        (Path(os.getenv("CODEX_HOME", "")).expanduser() / "auth.json", "codex_cli")
+        if os.getenv("CODEX_HOME", "").strip()
+        else (home / ".codex" / "auth.json", "codex_cli"),
+    ]
+
+    for path, source in candidates:
+        try:
+            if not path.is_file():
+                continue
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.debug("Failed reading Codex credentials from %s: %s", path, exc)
+            continue
+
+        tokens = _extract_external_codex_tokens(payload)
+        if not tokens:
+            continue
+        access = tokens["access_token"]
+        # Prefer non-expired access tokens; still allow import if only refresh exists.
+        exp_ms = _jwt_exp_ms(access) or 0
+        if exp_ms and exp_ms <= int(time.time() * 1000) and not tokens.get("refresh_token"):
+            logger.debug("Skipping expired Codex tokens without refresh at %s", path)
+            continue
+
+        creds = _codex_token_bundle(
+            access,
+            tokens.get("refresh_token", ""),
+            scopes=provider.scopes,
+            source=source,
+        )
+        try:
+            save_credentials(provider, creds)
+        except OAuthError as exc:
+            logger.debug("Failed saving imported Codex credentials: %s", exc)
+            return None
+        logger.info("Imported OpenAI Codex credentials from %s (%s)", path, source)
+        return creds
+    return None
 
 
 # ── MiniMax OAuth (PKCE device-code variant) ────────────────────────────
@@ -742,21 +993,45 @@ def is_valid(creds: Optional[Dict[str, Any]]) -> bool:
 def resolve_token(provider: Provider) -> Optional[str]:
     """Return a usable access token for *provider*, refreshing if needed."""
     creds = read_credentials(provider)
+    if not creds and provider.id == "openai_codex":
+        # Lazy-import Hermes/Codex CLI credentials on first use.
+        creds = import_codex_credentials(provider)
     if not creds:
         return None
     if is_valid(creds):
         return creds["access_token"]
     refresh_token = creds.get("refresh_token", "")
     if not refresh_token:
+        if provider.id == "openai_codex":
+            # Try a fresh external import before giving up.
+            imported = import_codex_credentials(provider, force=True)
+            if imported and is_valid(imported):
+                return imported["access_token"]
         return None
     try:
         refreshed = refresh(provider, refresh_token)
     except OAuthError as exc:
         logger.debug("%s OAuth refresh failed: %s", provider.id, exc)
+        if provider.id == "openai_codex":
+            imported = import_codex_credentials(provider, force=True)
+            if imported and is_valid(imported):
+                return imported["access_token"]
+            # Keep a stale access token only if JWT says it is still live.
+            access = str(creds.get("access_token") or "").strip()
+            exp_ms = _jwt_exp_ms(access) or 0
+            if access and exp_ms and exp_ms > int(time.time() * 1000) + 30_000:
+                return access
         return None
     try:
         save_credentials(provider, refreshed)
     except OAuthError:
+        pass
+    # Keep .env mirror current when possible (best-effort).
+    try:
+        from . import oauth_env  # local import avoids cycle at module load
+
+        oauth_env.sync_provider(provider, refreshed)
+    except Exception:
         pass
     return refreshed["access_token"]
 
@@ -764,6 +1039,15 @@ def resolve_token(provider: Provider) -> Optional[str]:
 def public_status(provider: Provider) -> Dict[str, Any]:
     """Return a safe, serializable snapshot of the provider's OAuth state."""
     creds = read_credentials(provider)
+    if not creds and provider.id == "openai_codex":
+        creds = import_codex_credentials(provider)
+        if creds:
+            try:
+                from . import oauth_env
+
+                oauth_env.sync_provider(provider, creds)
+            except Exception:
+                pass
     if not creds:
         return {"provider": provider.id, "authenticated": False}
     expires_at = int(creds.get("expires_at_ms", 0) or 0)
@@ -775,6 +1059,7 @@ def public_status(provider: Provider) -> Dict[str, Any]:
         "expires_in_seconds": max(0, (expires_at - now_ms) // 1000) if expires_at else None,
         "has_refresh_token": bool(creds.get("refresh_token")),
         "valid": is_valid(creds),
+        "source": creds.get("source") or "",
     }
 
 
@@ -784,3 +1069,4 @@ class OAuthError(RuntimeError):
 
 class OAuthPendingError(OAuthError):
     """Raised when device-code polling is still waiting for user approval."""
+

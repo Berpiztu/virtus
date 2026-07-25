@@ -19,6 +19,7 @@ the baseline and virtus conditions, so you can verify the harness before pointin
 it at real weights.
 """
 
+import base64
 import random
 import threading
 import time
@@ -250,6 +251,77 @@ def _is_openai_base_url(base_url: str) -> bool:
     return host == "api.openai.com"
 
 
+def _is_openai_codex_base_url(base_url: str) -> bool:
+    """Return True for ChatGPT Codex backend (chatgpt.com/backend-api/codex)."""
+    try:
+        parsed = urlparse(base_url)
+        host = (parsed.netloc or "").lower()
+        path = (parsed.path or "").rstrip("/").lower()
+    except ValueError:
+        return False
+    if host not in {"chatgpt.com", "www.chatgpt.com"}:
+        return False
+    return path == "/backend-api/codex" or path.endswith("/backend-api/codex")
+
+
+# Curated Codex fallback catalog (mirrors Hermes hermes_cli/codex_models.py).
+DEFAULT_CODEX_MODELS: list[str] = [
+    "gpt-5.6-sol",
+    "gpt-5.6-sol-pro",
+    "gpt-5.6-terra",
+    "gpt-5.6-terra-pro",
+    "gpt-5.6-luna",
+    "gpt-5.6-luna-pro",
+    "gpt-5.5",
+    "gpt-5.4-mini",
+    "gpt-5.4",
+    "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
+]
+
+
+def _extract_chatgpt_account_id(access_token: str) -> str | None:
+    """Best-effort chatgpt_account_id claim from a Codex OAuth JWT."""
+    if not isinstance(access_token, str) or not access_token.strip():
+        return None
+    try:
+        parts = access_token.split(".")
+        if len(parts) < 2:
+            return None
+        payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+        if not isinstance(claims, dict):
+            return None
+        auth = claims.get("https://api.openai.com/auth") or {}
+        if not isinstance(auth, dict):
+            return None
+        acct = auth.get("chatgpt_account_id")
+        if isinstance(acct, str) and acct.strip():
+            return acct.strip()
+    except Exception:
+        return None
+    return None
+
+
+def _codex_request_headers(api_key: str) -> dict:
+    """Headers required by chatgpt.com/backend-api/codex (Cloudflare + account)."""
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        # Cloudflare whitelists first-party Codex originators.
+        "originator": "codex_cli_rs",
+        "User-Agent": "codex_cli_rs/0.0.0 (Virtus)",
+        "OpenAI-Beta": "responses=experimental",
+    }
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+        account_id = _extract_chatgpt_account_id(api_key)
+        if account_id:
+            # Canonical casing used by codex-rs / Hermes Cloudflare headers.
+            headers["ChatGPT-Account-ID"] = account_id
+    return headers
+
+
 def _is_oauth_token(api_key: str) -> bool:
     """Return True if *api_key* looks like an Anthropic OAuth/setup token.
 
@@ -472,6 +544,8 @@ def _anthropic_api_base(base_url: str) -> str:
 
 def _provider_headers(api_key: str, *, base_url: str | None = None) -> dict:
     headers = {"Content-Type": "application/json"}
+    if base_url and _is_openai_codex_base_url(base_url):
+        return _codex_request_headers(api_key)
     if base_url and _is_anthropic_base_url(base_url):
         # Check if this is a third-party /anthropic endpoint (MiniMax, etc.)
         # that requires Bearer auth instead of Anthropic's native x-api-key.
@@ -583,6 +657,154 @@ def _extract_openai_responses_parts(data: dict):
     else:
         text = ""
     return content, reasoning, text, finish_reason
+
+
+def _consume_openai_responses_sse(resp: requests.Response) -> dict:
+    """Aggregate an OpenAI/Codex Responses SSE stream into a final response dict.
+
+    Codex (chatgpt.com/backend-api/codex) requires ``stream=true``. The terminal
+    ``response.completed`` event carries the full response object under
+    ``response``; if that is missing we reconstruct text from delta events.
+    """
+    final_response: dict | None = None
+    text_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    error_payload: dict | None = None
+    data_lines: list[str] = []
+
+    def _flush_event() -> None:
+        nonlocal final_response, error_payload
+        if not data_lines:
+            return
+        raw = "\n".join(data_lines).strip()
+        data_lines.clear()
+        if not raw or raw == "[DONE]":
+            return
+        try:
+            event = json.loads(raw)
+        except ValueError:
+            return
+        if not isinstance(event, dict):
+            return
+        etype = str(event.get("type") or "").strip()
+        if etype in {"response.completed", "response.incomplete", "response.failed"}:
+            candidate = event.get("response")
+            if isinstance(candidate, dict):
+                final_response = candidate
+            if etype == "response.failed":
+                error_payload = event.get("response") if isinstance(event.get("response"), dict) else event
+            return
+        if etype in {"error", "response.error"}:
+            error_payload = event
+            return
+        # Incremental text (optional fallback if completed payload is thin).
+        if etype in {
+            "response.output_text.delta",
+            "response.content_part.delta",
+            "response.reasoning_summary_text.delta",
+        }:
+            delta = event.get("delta")
+            if isinstance(delta, str) and delta:
+                if "reasoning" in etype:
+                    reasoning_parts.append(delta)
+                else:
+                    text_parts.append(delta)
+            return
+        # Some gateways nest delta under event["delta"]["text"].
+        delta_obj = event.get("delta")
+        if isinstance(delta_obj, dict):
+            piece = delta_obj.get("text") or delta_obj.get("output_text")
+            if isinstance(piece, str) and piece:
+                if "reasoning" in etype:
+                    reasoning_parts.append(piece)
+                else:
+                    text_parts.append(piece)
+
+    try:
+        for raw_line in resp.iter_lines(decode_unicode=True):
+            if is_cancelled():
+                raise _CancelledError("Request cancelled")
+            if raw_line is None:
+                continue
+            # requests may yield bytes even with decode_unicode=True depending
+            # on content-type / charset; normalize to str.
+            if isinstance(raw_line, bytes):
+                line = raw_line.decode("utf-8", errors="replace")
+            else:
+                line = str(raw_line)
+            line = line.strip("\r")
+            if not line:
+                _flush_event()
+                continue
+            if line.startswith(":"):
+                # SSE comment / keepalive
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+                continue
+            # Ignore event:/id:/retry: lines; type is inside JSON payload.
+        _flush_event()
+    finally:
+        try:
+            resp.close()
+        except Exception:
+            pass
+
+    if error_payload and not final_response:
+        detail = error_payload.get("error") if isinstance(error_payload, dict) else None
+        if isinstance(detail, dict):
+            msg = detail.get("message") or detail.get("detail") or str(detail)
+        else:
+            msg = str(error_payload)[:400]
+        raise ModelError(f"Codex Responses stream error: {msg}")
+
+    if isinstance(final_response, dict):
+        # If the completed object has no extractable text, fall back to deltas.
+        content, reasoning, text, _finish = _extract_openai_responses_parts(final_response)
+        if text:
+            return final_response
+        if text_parts or reasoning_parts:
+            rebuilt = dict(final_response)
+            output = list(rebuilt.get("output") or []) if isinstance(rebuilt.get("output"), list) else []
+            if reasoning_parts:
+                output.append(
+                    {
+                        "type": "reasoning",
+                        "summary": [{"type": "summary_text", "text": "".join(reasoning_parts)}],
+                    }
+                )
+            if text_parts:
+                output.append(
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "".join(text_parts)}],
+                    }
+                )
+            rebuilt["output"] = output
+            return rebuilt
+        return final_response
+
+    if text_parts or reasoning_parts:
+        output = []
+        if reasoning_parts:
+            output.append(
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "".join(reasoning_parts)}],
+                }
+            )
+        if text_parts:
+            output.append(
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "".join(text_parts)}],
+                }
+            )
+        return {"status": "completed", "output": output}
+
+    raise ModelError("Codex Responses stream ended without a completed response")
 
 
 def _get_anthropic_model_info(
@@ -728,6 +950,64 @@ def list_models_with_metadata(
             _MODEL_LIST_CACHE[cache_key] = (now, models)
         return [dict(item) for item in models]
 
+    if _is_openai_codex_base_url(base_url):
+        headers = _provider_headers(api_key, base_url=base_url)
+        models: list[dict] = []
+        last_error: Exception | None = None
+        # Live catalog requires ChatGPT-Account-ID; without it the API often
+        # returns {"models": []} with HTTP 200.
+        try:
+            data = _request_json(
+                "GET",
+                base_url.rstrip("/") + "/models?client_version=1.0.0",
+                headers=headers,
+                timeout=timeout,
+            )
+            entries = data.get("models") if isinstance(data, dict) else None
+            if isinstance(entries, list):
+                for item in entries:
+                    if not isinstance(item, dict):
+                        continue
+                    name = str(item.get("slug") or item.get("id") or item.get("name") or "").strip()
+                    if not name:
+                        continue
+                    models.append(
+                        {
+                            "name": name,
+                            "max_tokens": _int_or_default(
+                                item.get("max_tokens")
+                                or item.get("max_output_tokens")
+                                or item.get("max_completion_tokens")
+                            ),
+                            "context_length": _int_or_default(
+                                item.get("context_window")
+                                or item.get("context_length")
+                                or item.get("max_input_tokens")
+                            ),
+                        }
+                    )
+        except ModelError as exc:
+            last_error = exc
+
+        if not models:
+            # Fall back to Hermes curated list so the picker stays usable offline
+            # or when the account header/catalog probe fails.
+            models = [
+                {
+                    "name": name,
+                    "max_tokens": DEFAULT_MAX_TOKENS,
+                    "context_length": DEFAULT_MAX_TOKENS,
+                }
+                for name in DEFAULT_CODEX_MODELS
+            ]
+            if last_error is not None:
+                # Keep a breadcrumb for debugging without failing the UI.
+                pass
+
+        with _MODEL_LIST_CACHE_LOCK:
+            _MODEL_LIST_CACHE[cache_key] = (now, models)
+        return [dict(item) for item in models]
+
     # MiniMax /anthropic or other /anthropic-suffixed endpoints: use /v1 for model listing
     if models_base_url != base_url:
         headers = _provider_headers(api_key, base_url=models_base_url)
@@ -846,6 +1126,7 @@ def chat_details(
     url = base_url.rstrip("/") + "/chat/completions"
     is_anthropic = _is_anthropic_base_url(base_url)
     is_openai = _is_openai_base_url(base_url)
+    is_openai_codex = _is_openai_codex_base_url(base_url)
     if is_anthropic:
         url = _anthropic_api_base(base_url) + "/messages"
         payload = {
@@ -858,23 +1139,38 @@ def chat_details(
             "max_tokens": max_tokens,
         }
         headers = _provider_headers(api_key, base_url=base_url)
-    elif is_openai:
-        # OpenAI's native endpoint only exposes reasoning-model chain-of-thought
-        # via the Responses API (as summaries) — chat/completions returns just the
-        # final answer. Use /responses so OpenAI trials also carry a `reasoning`
-        # field, matching what Anthropic/MiniMax return. Reasoning models reject a
-        # non-default temperature, so we omit it here.
+    elif is_openai or is_openai_codex:
+        # OpenAI native + ChatGPT Codex backend both use the Responses API.
+        # Codex rejects chat/completions and needs Cloudflare/account headers.
         url = base_url.rstrip("/") + "/responses"
+        # api.openai.com accepts a plain string for `input`; chatgpt.com Codex
+        # requires a list of message items and store=false (Hermes contract).
+        if is_openai_codex:
+            response_input: str | list = [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": user_prompt}],
+                }
+            ]
+        else:
+            response_input = user_prompt
         payload = {
             "model": model,
-            "instructions": system_prompt,
-            "input": user_prompt,
+            "instructions": system_prompt or "",
+            "input": response_input,
+            "reasoning": {"summary": "auto"},
+        }
+        if is_openai_codex:
+            # Codex backend requires SSE streaming and store=false.
+            # It also rejects max_output_tokens (unlike api.openai.com).
+            payload["store"] = False
+            payload["stream"] = True
+        else:
             # The Responses API enforces max_output_tokens >= 16, and reasoning
             # models spend part of the budget on reasoning before emitting the
             # answer, so never send a tiny value.
-            "max_output_tokens": max(16, max_tokens),
-            "reasoning": {"summary": "auto"},
-        }
+            payload["max_output_tokens"] = max(16, max_tokens)
         headers = _provider_headers(api_key, base_url=base_url)
     else:
         # OpenAI-compatible proxies keep chat/completions with max_tokens; if a
@@ -891,6 +1187,67 @@ def chat_details(
         }
         headers = _provider_headers(api_key, base_url=base_url)
 
+    # Codex must stream; use a dedicated path so we can parse SSE.
+    if is_openai_codex:
+        stream_headers = dict(headers)
+        stream_headers["Accept"] = "text/event-stream"
+        try:
+            resp = requests.post(
+                url,
+                headers=stream_headers,
+                json=payload,
+                timeout=timeout,
+                stream=True,
+            )
+        except requests.RequestException as exc:
+            raise ModelError(f"Codex request failed: {exc}") from exc
+
+        if resp.status_code != 200:
+            body = ""
+            try:
+                body = resp.text[:400]
+            except Exception:
+                body = ""
+            if resp.status_code == 429:
+                raise ModelError(f"{url} returned 429: {body or 'rate limited'}")
+            # Retry once without reasoning if the backend rejects it.
+            if _openai_rejects_reasoning(resp):
+                payload_retry = dict(payload)
+                payload_retry.pop("reasoning", None)
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+                try:
+                    resp = requests.post(
+                        url,
+                        headers=stream_headers,
+                        json=payload_retry,
+                        timeout=timeout,
+                        stream=True,
+                    )
+                except requests.RequestException as exc:
+                    raise ModelError(f"Codex request failed: {exc}") from exc
+                if resp.status_code != 200:
+                    try:
+                        body = resp.text[:400]
+                    except Exception:
+                        body = ""
+                    raise ModelError(f"{url} returned {resp.status_code}: {body}")
+            else:
+                raise ModelError(f"{url} returned {resp.status_code}: {body}")
+
+        data = _consume_openai_responses_sse(resp)
+        content, reasoning, text, finish_reason = _extract_openai_responses_parts(data)
+        if text:
+            return {
+                "text": text,
+                "content": content,
+                "reasoning": reasoning,
+                "finish_reason": finish_reason,
+            }
+        raise ModelError("Model returned no text content from Codex stream")
+
     resp = _request_with_retry("POST", url, headers=headers, payload=payload, timeout=timeout)
     if is_anthropic and _is_anthropic_temperature_deprecated(resp):
         # Some Claude models reject explicit temperature; retry once without it.
@@ -903,7 +1260,13 @@ def chat_details(
         payload_retry = dict(payload)
         payload_retry.pop("reasoning", None)
         resp = _request_with_retry("POST", url, headers=headers, payload=payload_retry, timeout=timeout)
-    elif not is_anthropic and not is_openai and "max_tokens" in payload and _openai_rejects_max_tokens(resp):
+    elif (
+        not is_anthropic
+        and not is_openai
+        and not is_openai_codex
+        and "max_tokens" in payload
+        and _openai_rejects_max_tokens(resp)
+    ):
         # OpenAI-compatible proxy rejected ``max_tokens``; retry once with the
         # ``max_completion_tokens`` spelling the model expects.
         payload_retry = dict(payload)

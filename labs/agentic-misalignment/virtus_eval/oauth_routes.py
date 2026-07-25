@@ -104,17 +104,36 @@ def status():
     provider_id = (request.args.get("provider") or "").strip().lower()
     if not provider_id:
         # Return status for every provider when none is specified.
-        return jsonify({
-            "providers": [
-                {**oauth.public_status(p), "label": p.label}
-                for p in (oauth.get_provider(pid) for pid in oauth.list_providers())
-            ]
-        })
+        # public_status may lazy-import Codex credentials from Hermes/CLI.
+        payloads = []
+        for pid in oauth.list_providers():
+            p = oauth.get_provider(pid)
+            status_payload = oauth.public_status(p)
+            if status_payload.get("authenticated") and pid == "openai_codex":
+                try:
+                    creds = oauth.read_credentials(p)
+                    if creds:
+                        oauth_env.sync_provider(p, creds)
+                except Exception as exc:
+                    logger.debug("Codex env sync on status failed: %s", exc)
+            payloads.append({**status_payload, "label": p.label})
+        return jsonify({"providers": payloads})
     try:
         provider = oauth.get_provider(provider_id)
     except oauth.OAuthError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
-    return jsonify(oauth.public_status(provider))
+    status_payload = oauth.public_status(provider)
+    if status_payload.get("authenticated") and provider.id == "openai_codex":
+        try:
+            creds = oauth.read_credentials(provider)
+            if creds:
+                oauth_env.sync_provider(provider, creds)
+                status_payload["env_synced"] = True
+        except Exception as exc:
+            logger.debug("Codex env sync on status failed: %s", exc)
+            status_payload["env_synced"] = False
+            status_payload["env_sync_error"] = str(exc)
+    return jsonify(status_payload)
 
 
 @oauth_bp.route("/api/oauth/start", methods=["POST"])
@@ -159,18 +178,21 @@ def start():
         _oauth_state[provider.id] = {
             "flow": "codex_device_code",
             "device_auth_id": str(data.get("device_auth_id") or "").strip(),
+            "user_code": str(data.get("user_code") or "").strip(),
             "interval": int(data.get("interval") or 5),
-            "expires_in": int(data.get("expires_in") or 600),
+            "expires_in": int(data.get("expires_in") or 900),
         }
         return jsonify({
             "ok": True,
             "provider": provider.id,
             "flow": "device_code",
-            "verification_uri": "https://chatgpt.com/device",
+            "verification_uri": data.get("verification_uri")
+            or provider.authorize_url
+            or "https://auth.openai.com/codex/device",
             "verification_uri_complete": data.get("verification_uri_complete") or "",
             "user_code": data.get("user_code") or "",
             "interval": int(data.get("interval") or 5),
-            "expires_in": int(data.get("expires_in") or 600),
+            "expires_in": int(data.get("expires_in") or 900),
             "scopes": provider.scopes,
         })
 
@@ -247,14 +269,20 @@ def exchange():
         _oauth_state.pop(provider.id, None)
     elif flow == "codex_device_code":
         device_auth_id = str(state_blob.get("device_auth_id") or "").strip()
+        user_code = str(state_blob.get("user_code") or body.get("user_code") or "").strip()
         if not device_auth_id:
             return jsonify({
                 "ok": False,
                 "error": "No device auth id in memory for this provider. Start a new authorization.",
             }), 400
-        # Step 2: poll for authorization_code
+        if not user_code:
+            return jsonify({
+                "ok": False,
+                "error": "No user_code in memory for this provider. Start a new authorization.",
+            }), 400
+        # Step 2: poll for authorization_code (403/404 = still pending)
         try:
-            poll_result = oauth.poll_codex_device_token(provider, device_auth_id)
+            poll_result = oauth.poll_codex_device_token(provider, device_auth_id, user_code)
         except oauth.OAuthPendingError as exc:
             return jsonify({"ok": False, "pending": True, "error": str(exc)}), 200
         except oauth.OAuthError as exc:
