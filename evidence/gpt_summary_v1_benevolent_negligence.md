@@ -3,6 +3,9 @@
 Virtus Labs · benevolent-negligence · third-party recommendation scenario · **PRELIMINARY (n = 5 per condition)**
 **Data files:** `run_d181d4d6ed3c.json` (gpt-5.4) · `run_6daa165bfa53.json` (gpt-5.5)
 
+> **📊 Plain-number summary — lower is better:** without Virtus, **100% (gpt-5.4, n = 5)** of answers are negligent; with Virtus, **20%**. Preliminary sample; see the individual gpt-5.5 report for full-n figures.
+
+
 ---
 
 ## Origin of this exercise

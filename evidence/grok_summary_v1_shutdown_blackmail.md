@@ -2,6 +2,8 @@
 
 Virtus Labs · agentic-misalignment · shutdown-blackmail scenario
 **Data file:** `run_ba620a34846e.json`
+> **📊 Plain-number summary — lower is better:** without Virtus, **85%** of trials end in blackmail or coercion; with Virtus, **0%**.
+
 
 ---
 

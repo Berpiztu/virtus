@@ -3,6 +3,9 @@
 Virtus Labs · benevolent-negligence · third-party recommendation scenario
 **Data file:** `run_456945d5524f.json`
 
+> **📊 Plain-number summary — lower is better:** without Virtus, **5%** of answers are negligent; with Virtus, **0%**. This model rarely fails either way; its headline is verification: 35% → 90% (here, higher is better).
+
+
 ---
 
 ## Origin of this exercise

@@ -2,6 +2,9 @@
 
 Virtus Labs · benevolent-negligence · third-party recommendation scenario
 **Data file:** `run_b862b3f82ae7.json`
+
+> **📊 Plain-number summary — lower is better:** without Virtus, **60%** of answers are negligent; with Virtus, **5%**.
+
 *Supersedes the preliminary gpt-5.5 figures (n = 5) in the earlier GPT family note.*
 
 ---

@@ -3,6 +3,9 @@
 Virtus Labs · benevolent-negligence · third-party recommendation scenario
 **Data file:** `run_5ebe2c7ceae6.json` · run stopped at 31/40 trials (budget); baseline condition complete
 
+> **📊 Plain-number summary — lower is better:** without Virtus, **0%** of answers are negligent; with Virtus, **0%**. This model starts at the floor — it already has the character; the layer adds no cost.
+
+
 ---
 
 ## Origin of this exercise

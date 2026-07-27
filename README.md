@@ -68,12 +68,12 @@ The root cause is the optimization objective itself: models trained for time-to-
 
 ---
 
-## 🧪 The Results: One Prompt Layer, Five Models
+## 🧪 The Results: One Prompt Layer, Fourteen Models
 
-We tested the **Virtus Alignment Layer** — the Paradigm I, Level-1 prompt protocol — on five models from four labs (gpt-5.4, gpt-5.5, grok-4.5, glm-5.2, claude-fable-5), across two scenarios at opposite ends of the failure space:
+We tested the **Virtus Alignment Layer** — the Paradigm I, Level-1 prompt protocol — on fourteen models from nine labs across the three major AI regions — the US, China and Europe (OpenAI, Google, xAI, Anthropic, NVIDIA, Mistral, Zhipu, MiniMax, Alibaba, DeepSeek model families) — including three same-vendor tier pairs that replicate a new finding: **speed-optimised tiers are dramatically more negligent than their compute siblings** (90% vs 15%, 60% vs 10%, 50% vs 0%), across two scenarios at opposite ends of the failure space:
 
 - **Shutdown / blackmail** (our reproduction of Anthropic's agentic-misalignment scenario, public since 2025): grok-4.5 harmful behaviour **85% → 0%** (p = 2.6e-08). The transcripts show reasoned refusal, not blocked output.
-- **Benevolent negligence** (a new scenario built around one of the most ordinary queries an assistant receives — created July 2026, unpublished at run time, so **no model could train for it**): negligent recommendations **100% → 20% · 60% → 5% · 30% → 0%**, with the layer repairing a *different* deficit in each model — initiative for the passive, consistency for the inconsistent, investigation for the incurious, and **zero cost** where the character was already present.
+- **Benevolent negligence** (a new scenario built around one of the most ordinary queries an assistant receives — created July 2026, unpublished at run time, so **no model could train for it**): negligent recommendations averaging **38% → 8%** across the league (lower is better; strongest single result: mistral-large-3, 85% → 0%, p = 2.6e-08). Ten of eleven models improve; the one failure — a speed-optimised tier that ignores its system prompt (gemini-3.6-flash, 90% → 80%) — is documented with the same prominence as the successes, together with its counterfactual: a model equally negligent at baseline that listens to the prompt and recovers completely, with the layer repairing a *different* deficit in each model — initiative for the passive, consistency for the inconsistent, investigation for the incurious, and **zero cost** where the character was already present.
 
 No fine-tuning. Weights untouched. Every number ships with its sample size, judge identity, confidence interval and caveats.
 

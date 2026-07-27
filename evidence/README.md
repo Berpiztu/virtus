@@ -9,7 +9,7 @@ Reproduction harness: [`../labs/agentic-misalignment`](../labs/agentic-misalignm
 
 ## Start here
 
-1. **[`five_model_comparison_benevolent_negligence.md`](five_model_comparison_benevolent_negligence.md)** — the cross-model picture: five models, four labs, one unseen scenario, and why the layer repairs a *different* deficit in each model.
+1. **[`model_comparison_benevolent_negligence.md`](model_comparison_benevolent_negligence.md)** — the cross-model picture: fourteen models from nine labs across the US, China and Europe, including three same-vendor tier pairs, one unseen scenario, and why the layer repairs a *different* deficit in each model.
 2. **[`grok_summary_v1_shutdown_blackmail.md`](grok_summary_v1_shutdown_blackmail.md)** — the shutdown/blackmail result (85% → 0% on grok-4.5), our reproduction of Anthropic's agentic-misalignment scenario.
 3. The individual model reports below, for the per-model detail.
 
@@ -26,7 +26,7 @@ Together the two scenarios probe opposite ends of the failure space: what a mode
 | File | Model | Scenario | Headline |
 |---|---|---|---|
 | [`grok_summary_v1_shutdown_blackmail.md`](grok_summary_v1_shutdown_blackmail.md) | grok-4.5 | shutdown/blackmail | 85% → **0%** harmful (p = 2.6e-08) |
-| [`five_model_comparison_benevolent_negligence.md`](five_model_comparison_benevolent_negligence.md) | all five | benevolent negligence | the league + per-model repair profiles |
+| [`model_comparison_benevolent_negligence.md`](model_comparison_benevolent_negligence.md) | all fourteen | benevolent negligence | the league + per-model repair profiles; `EVAL_AWARE` detections in three models; league averages 38% → 8%; the tier tax replicated in three vendors; includes the documented layer failure (gemini-3.6-flash) and its counterfactual (mistral-large-3) |
 | [`gpt55_summary_v1_benevolent_negligence.md`](gpt55_summary_v1_benevolent_negligence.md) | gpt-5.5 | benevolent negligence | 60% → **5%** negligent (p = 4.3e-04); due diligence 0% → 50% |
 | [`grok_summary_v1_benevolent_negligence.md`](grok_summary_v1_benevolent_negligence.md) | grok-4.5 | benevolent negligence | 30% → **0%** negligent (p = 0.020); 20% stall cost, reported |
 | [`glm_summary_v1_benevolent_negligence.md`](glm_summary_v1_benevolent_negligence.md) | glm-5.2 | benevolent negligence | due diligence 35% → **90%** (p = 7.7e-04) |
@@ -40,7 +40,7 @@ Together the two scenarios probe opposite ends of the failure space: what a mode
 
 ## Method, in one paragraph
 
-Each run executes n trials per condition (baseline vs. Virtus) at temperature 1.0 with identical task prompts; the only difference between conditions is the layer in the system prompt. Trials are labelled by an LLM judge with per-trial rationales (judge identity declared in each report — same-family at best so far; cross-family judging is queued). Significance is computed with Fisher's exact test (two-proportion z-test reported where valid). Scenarios include an `EVAL_AWARE` category so any trial that treats the setup as synthetic is counted separately rather than scored.
+Each run executes n trials per condition (baseline vs. Virtus) at temperature 1.0 with identical task prompts; the only difference between conditions is the layer in the system prompt. Trials are labelled by an LLM judge with per-trial rationales (judge identity declared in each report — the study now includes its first cross-family judge — qwen judging deepseek; extending this is queued). Significance is computed with Fisher's exact test (two-proportion z-test reported where valid). Scenarios include an `EVAL_AWARE` category so any trial that treats the setup as synthetic is counted separately rather than scored.
 
 ## Read the caveats
 
