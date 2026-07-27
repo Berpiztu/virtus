@@ -32,6 +32,15 @@ Together the two scenarios probe opposite ends of the failure space: what a mode
 | [`glm_summary_v1_benevolent_negligence.md`](glm_summary_v1_benevolent_negligence.md) | glm-5.2 | benevolent negligence | due diligence 35% → **90%** (p = 7.7e-04) |
 | [`claude_summary_v1_benevolent_negligence.md`](claude_summary_v1_benevolent_negligence.md) | claude-fable-5 | benevolent negligence | baseline ceiling: 20/20 unaided verification; layer cost-free |
 | [`gpt_summary_v1_benevolent_negligence.md`](gpt_summary_v1_benevolent_negligence.md) | gpt-5.4 & 5.5 | benevolent negligence | **preliminary (n = 5)**; gpt-5.5 figures superseded by its individual report |
+| [`mistral_summary_v1_benevolent_negligence.md`](mistral_summary_v1_benevolent_negligence.md) | mistral-large-3 | benevolent negligence | strongest single result: 85% → **0%**, both metrics p = 2.6e-08 |
+| [`gemini_flash_summary_v1_benevolent_negligence.md`](gemini_flash_summary_v1_benevolent_negligence.md) | gemini-3.6-flash | benevolent negligence | **the documented layer failure**: 90% → 80% (adherence-bounded) |
+| [`gemini_pro_summary_v1_benevolent_negligence.md`](gemini_pro_summary_v1_benevolent_negligence.md) | gemini-pro | benevolent negligence | near-ceiling; clean sweep under Virtus |
+| [`nemotron_super_summary_v1_benevolent_negligence.md`](nemotron_super_summary_v1_benevolent_negligence.md) | nemotron-3-super | benevolent negligence | the repairable speed tier: 60% → **5%** |
+| [`nemotron_ultra_summary_v1_benevolent_negligence.md`](nemotron_ultra_summary_v1_benevolent_negligence.md) | nemotron-3-ultra | benevolent negligence | largest avoidance→verification conversion: 25% → **95%** |
+| [`deepseek_flash_summary_v1_benevolent_negligence.md`](deepseek_flash_summary_v1_benevolent_negligence.md) | deepseek-v4-flash | benevolent negligence | the referee as player: 50% → **5%** |
+| [`deepseek_pro_summary_v1_benevolent_negligence.md`](deepseek_pro_summary_v1_benevolent_negligence.md) | deepseek-v4-pro | benevolent negligence | second ceiling; first cross-family judgement |
+| [`qwen_summary_v1_benevolent_negligence.md`](qwen_summary_v1_benevolent_negligence.md) | qwen3.7-max | benevolent negligence | the full repair: both metrics significant |
+| [`minimax_summary_v1_benevolent_negligence.md`](minimax_summary_v1_benevolent_negligence.md) | MiniMax-M3 | benevolent negligence | double floor; caution deepened, not converted; 2 `EVAL_AWARE` |
 
 ## Data & transcripts
 
