@@ -609,6 +609,9 @@ function config() {
     model: $("model").value.trim(),
     base_url: $("base_url").value.trim(),
     api_key: $("api_key").value.trim(),
+    // Lets the server re-resolve OAuth tokens itself instead of trusting the
+    // api_key captured in the form, which may already have expired.
+    provider: $("provider").value.trim(),
     judge_model: $("judge_model").value.trim(),
     n_runs: parseInt($("n_runs").value, 10),
     temperature: parseFloat($("temperature").value),

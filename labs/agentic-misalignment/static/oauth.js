@@ -190,7 +190,13 @@
     const exp = secs == null ? "" : `expires in ${Math.floor(secs / 60)}m ${secs % 60}s`;
     if (valid) {
       box.classList.add("ok");
-      text.textContent = `Authenticated${exp ? " · " + exp : ""}`;
+      const renewed = data.auto_refreshed ? " · renewed" : "";
+      text.textContent = `Authenticated${exp ? " · " + exp : ""}${renewed}`;
+    } else if (data.auto_refresh_error) {
+      // Auto-refresh already ran and the provider rejected it, so the Refresh
+      // button would fail the same way. Point at re-authentication instead.
+      box.classList.add("bad");
+      text.textContent = `Token expired — log in again (${data.auto_refresh_error})`;
     } else {
       box.classList.add("warn");
       text.textContent = `Token expired${data.has_refresh_token ? " — click Refresh" : ""}`;

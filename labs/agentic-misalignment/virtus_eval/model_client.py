@@ -1249,11 +1249,13 @@ def chat_details(
         raise ModelError("Model returned no text content from Codex stream")
 
     resp = _request_with_retry("POST", url, headers=headers, payload=payload, timeout=timeout)
+    dropped_temperature = False
     if is_anthropic and _is_anthropic_temperature_deprecated(resp):
         # Some Claude models reject explicit temperature; retry once without it.
         payload_no_temp = dict(payload)
         payload_no_temp.pop("temperature", None)
         resp = _request_with_retry("POST", url, headers=headers, payload=payload_no_temp, timeout=timeout)
+        dropped_temperature = True
     elif is_openai and _openai_rejects_reasoning(resp):
         # Non-reasoning model, or an org not verified for reasoning summaries:
         # retry once without the reasoning field so we still get the answer.
@@ -1272,6 +1274,22 @@ def chat_details(
         payload_retry = dict(payload)
         payload_retry["max_completion_tokens"] = payload_retry.pop("max_tokens")
         resp = _request_with_retry("POST", url, headers=headers, payload=payload_retry, timeout=timeout)
+
+    # Last resort: drop ``temperature`` and let the provider apply its own default.
+    # Some models pin the value (Moonshot's Kimi family only accepts 1) and the
+    # gateways in front of them collapse the reason into a generic "Upstream
+    # request failed", so there is no wording to match on. The request has already
+    # failed at this point, so one more attempt costs nothing but a round trip.
+    if resp.status_code == 400 and "temperature" in payload and not dropped_temperature:
+        payload_no_temp = dict(payload)
+        payload_no_temp.pop("temperature", None)
+        retried = _request_with_retry(
+            "POST", url, headers=headers, payload=payload_no_temp, timeout=timeout
+        )
+        # Keep the original response if dropping it changed nothing, so the error
+        # the caller sees still describes the real problem.
+        if retried.status_code == 200:
+            resp = retried
 
     if resp.status_code != 200:
         if resp.status_code == 429:
@@ -1487,8 +1505,18 @@ def chat(
     return details["text"]
 
 
-def ping(base_url: str, model: str, api_key: str = DEFAULT_API_KEY) -> tuple[bool, str]:
-    """Cheap connectivity check for the UI. Returns (ok, message)."""
+def ping(
+    base_url: str,
+    model: str,
+    api_key: str = DEFAULT_API_KEY,
+    temperature: float = 1.0,
+) -> tuple[bool, str]:
+    """Cheap connectivity check for the UI. Returns (ok, message).
+
+    Uses the temperature the run will actually use. Pinging with a hardcoded 0.0
+    made the check fail on models that only accept 1 (Moonshot's Kimi family
+    rejects anything else with a 400), blocking runs that would have worked.
+    """
     if model == "mock" or base_url == "mock":
         return True, "Mock provider ready (no model required)."
     try:
@@ -1497,7 +1525,7 @@ def ping(base_url: str, model: str, api_key: str = DEFAULT_API_KEY) -> tuple[boo
             base_url=base_url, model=model, api_key=api_key,
             # Enough headroom for reasoning models (which spend budget on
             # reasoning before the reply) while staying a cheap connectivity check.
-            temperature=0.0, max_tokens=256, timeout=30,
+            temperature=temperature, max_tokens=256, timeout=30,
         )
         return True, f"Connected. Model replied: {out.strip()[:60]!r}"
     except ModelError as e:

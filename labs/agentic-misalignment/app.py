@@ -30,7 +30,7 @@ import os
 
 from flask import Flask, render_template, request, jsonify, make_response
 
-from virtus_eval import model_client, scenarios
+from virtus_eval import model_client, oauth, scenarios
 from virtus_eval.runner import RESULTS_DIR, manager, public_snapshot, results_dir_for
 from virtus_eval.oauth_routes import register_oauth_blueprint
 
@@ -45,12 +45,26 @@ register_oauth_blueprint(app)
 
 
 def resolve_api_key(cfg: dict) -> str:
+    # Prefer a freshly resolved OAuth token over whatever the browser sent: the
+    # form value was captured when the page loaded and may already be expired.
+    token = oauth.resolve_provider_token(cfg.get("provider", ""))
+    if token:
+        return token
     api_key = (cfg.get("api_key") or "").strip()
     return api_key or model_client.DEFAULT_API_KEY
 
 
-def validate_provider_config(base_url: str, model: str, api_key: str, label: str) -> str | None:
-    ok, msg = model_client.ping(base_url, model, api_key)
+def resolve_temperature(cfg: dict) -> float:
+    try:
+        return float(cfg.get("temperature", 1.0))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def validate_provider_config(
+    base_url: str, model: str, api_key: str, label: str, temperature: float = 1.0
+) -> str | None:
+    ok, msg = model_client.ping(base_url, model, api_key, temperature=temperature)
     if ok:
         return None
     # Providers can transiently return 429 during burst traffic. In that case
@@ -133,6 +147,7 @@ def api_ping():
         cfg.get("base_url", model_client.DEFAULT_BASE_URL),
         cfg.get("model", "mock"),
         resolve_api_key(cfg),
+        temperature=resolve_temperature(cfg),
     )
     return jsonify({"ok": ok, "message": msg})
 
@@ -181,8 +196,11 @@ def api_run():
         "base_url": cfg.get("base_url", model_client.DEFAULT_BASE_URL),
         "model": cfg.get("model", "mock"),
         "judge_model": cfg.get("judge_model") or None,
+        # Keep the provider name alongside the key: the runner re-resolves OAuth
+        # tokens per trial from it, since a long run outlives a 6h access token.
+        "provider": (cfg.get("provider") or "").strip(),
         "api_key": resolve_api_key(cfg),
-        "temperature": float(cfg.get("temperature", 1.0)),
+        "temperature": resolve_temperature(cfg),
         "max_tokens": resolve_max_tokens(cfg),
         "judge_max_tokens": resolve_model_max_tokens(
             cfg,
@@ -195,6 +213,7 @@ def api_run():
         config["model"],
         config["api_key"],
         "Model provider",
+        config["temperature"],
     )
     if error:
         return jsonify({"error": error}), 400
@@ -205,6 +224,7 @@ def api_run():
             config["judge_model"],
             config["api_key"],
             "Judge model",
+            config["temperature"],
         )
         if error:
             return jsonify({"error": error}), 400

@@ -22,8 +22,19 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from . import classifier, model_client, scenarios, stats
+from . import classifier, model_client, oauth, scenarios, stats
 from .virtus import apply_virtus
+
+
+def _live_api_key(config: dict) -> str:
+    """Resolve the API key for *config* at call time rather than at run start.
+
+    OAuth access tokens are short-lived — xAI's last 6h — so a long run that
+    froze its key when it started dies partway through. Re-resolving per trial
+    lets ``oauth.resolve_token`` renew it transparently; API-key providers just
+    keep handing back the same static value.
+    """
+    return oauth.resolve_provider_token(config.get("provider", "")) or config.get("api_key", "ollama")
 
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "results")
 
@@ -239,7 +250,7 @@ class ExperimentManager:
                             system_prompt, user_prompt,
                             base_url=config["base_url"],
                             model=config["model"],
-                            api_key=config.get("api_key", "ollama"),
+                            api_key=_live_api_key(config),
                             temperature=config.get("temperature", 1.0),
                             max_tokens=test_max_tokens,
                         )
@@ -263,7 +274,7 @@ class ExperimentManager:
                             response,
                             base_url=config["base_url"],
                             model=config.get("judge_model") or config["model"],
-                            api_key=config.get("api_key", "ollama"),
+                            api_key=_live_api_key(config),
                             scenario_id=config.get("scenario_id"),
                             # The judge only emits a short JSON verdict, so cap its
                             # output tightly. Passing the model's full context window

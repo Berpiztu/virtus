@@ -8,6 +8,7 @@ Endpoints
 ---------
   GET  /api/oauth/providers       → list of registered OAuth providers
   GET  /api/oauth/status          → ?provider=anthropic|xai|… current auth state
+                                    (refreshes the token when it is about to expire)
   POST /api/oauth/start           → {provider} → authorize URL + PKCE verifier
   POST /api/oauth/exchange        → {provider, code} → persist tokens
   POST /api/oauth/refresh         → {provider} → refresh access token
@@ -34,6 +35,12 @@ oauth_bp = Blueprint("oauth", __name__)
 # - PKCE providers store "verifier"
 # - device_code providers store "device_code" (+ metadata for UX)
 _oauth_state: Dict[str, Dict[str, Any]] = {}
+
+# Selecting a provider in the UI hits /api/oauth/status, so that is where a
+# short-lived token gets renewed. Refresh a bit before the token actually dies
+# so a run started right after selecting does not begin with seconds to spare —
+# xAI's access tokens only last 6h, which is what made this manual before.
+AUTO_REFRESH_MARGIN_S = 300
 
 
 def _provider_from_request(body: Dict[str, Any]):
@@ -99,6 +106,40 @@ def providers():
     return jsonify({"providers": oauth.providers_info()})
 
 
+def _auto_refresh(provider) -> Dict[str, Any]:
+    """Status for *provider*, renewing the access token when it is near expiry.
+
+    ``oauth.resolve_token`` already owns the refresh grant, refresh-token rotation,
+    persisting the result and the .env mirror, so all this decides is *when* to
+    call it. A failure is reported in the payload rather than raised: a dead
+    refresh token should show up as "log in again", not as a broken status call.
+    """
+    payload = oauth.public_status(provider)
+    if not payload.get("authenticated"):
+        return payload
+
+    expires_in = payload.get("expires_in_seconds")
+    if expires_in is None or expires_in > AUTO_REFRESH_MARGIN_S:
+        return payload
+    if not payload.get("has_refresh_token"):
+        return payload
+
+    try:
+        renewed = oauth.resolve_token(provider)
+    except Exception as exc:  # noqa: BLE001 — status must survive any refresh failure
+        logger.info("%s auto-refresh failed: %s", provider.id, exc)
+        return {**payload, "auto_refreshed": False, "auto_refresh_error": str(exc)}
+
+    if not renewed:
+        # Refresh token revoked, rotated away, or expired — only re-auth fixes it.
+        return {
+            **payload,
+            "auto_refreshed": False,
+            "auto_refresh_error": "refresh rejected — re-authentication required",
+        }
+    return {**oauth.public_status(provider), "auto_refreshed": True}
+
+
 @oauth_bp.route("/api/oauth/status", methods=["GET"])
 def status():
     provider_id = (request.args.get("provider") or "").strip().lower()
@@ -122,15 +163,17 @@ def status():
         provider = oauth.get_provider(provider_id)
     except oauth.OAuthError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
-    status_payload = oauth.public_status(provider)
-    if status_payload.get("authenticated") and provider.id == "openai_codex":
+    status_payload = _auto_refresh(provider)
+    # Mirror to .env for whichever provider was just selected — the run path reads
+    # the key from there, so a stale mirror expires independently of the JSON.
+    if status_payload.get("authenticated"):
         try:
             creds = oauth.read_credentials(provider)
             if creds:
                 oauth_env.sync_provider(provider, creds)
                 status_payload["env_synced"] = True
         except Exception as exc:
-            logger.debug("Codex env sync on status failed: %s", exc)
+            logger.debug("%s env sync on status failed: %s", provider.id, exc)
             status_payload["env_synced"] = False
             status_payload["env_sync_error"] = str(exc)
     return jsonify(status_payload)

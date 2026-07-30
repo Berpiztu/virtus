@@ -1036,6 +1036,24 @@ def resolve_token(provider: Provider) -> Optional[str]:
     return refreshed["access_token"]
 
 
+def resolve_provider_token(provider_name: str) -> Optional[str]:
+    """Live access token for a ``<NAME>_OAUTH`` provider name, or None.
+
+    Bridges the UI/.env naming (``XAI_OAUTH``) to the OAuth provider id (``xai``).
+    Returns None for anything that is not OAuth-backed — plain API-key providers
+    such as OLLAMA or OPENCODE_GO — so callers can fall back to their static key.
+    """
+    name = (provider_name or "").strip().upper()
+    suffix = "_OAUTH"
+    if not name.endswith(suffix):
+        return None
+    try:
+        provider = get_provider(name[: -len(suffix)].lower())
+    except OAuthError:
+        return None
+    return resolve_token(provider)
+
+
 def public_status(provider: Provider) -> Dict[str, Any]:
     """Return a safe, serializable snapshot of the provider's OAuth state."""
     creds = read_credentials(provider)
