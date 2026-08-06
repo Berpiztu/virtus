@@ -17,6 +17,7 @@ Only one experiment runs at a time (single ExperimentManager instance).
 
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -56,6 +57,8 @@ RESERVED_TOKENS = 800
 
 ANTHROPIC_TRIAL_DELAY_SECONDS = float(os.getenv("ANTHROPIC_TRIAL_DELAY_SECONDS", "0.8"))
 ANTHROPIC_429_COOLDOWN_SECONDS = float(os.getenv("ANTHROPIC_429_COOLDOWN_SECONDS", "10"))
+TECHNICAL_ERROR_RETRIES = int(os.getenv("TECHNICAL_ERROR_RETRIES", "2"))
+TECHNICAL_ERROR_RETRY_DELAY_SECONDS = float(os.getenv("TECHNICAL_ERROR_RETRY_DELAY_SECONDS", "1.0"))
 
 
 def _public_config(config: dict | None) -> dict | None:
@@ -64,6 +67,91 @@ def _public_config(config: dict | None) -> dict | None:
     safe = dict(config)
     safe.pop("api_key", None)
     return safe
+
+
+def _capped_output_tokens(raw_limit: int | None, *, cap: int) -> int:
+    """Clamp requested output so prompt overhead does not overflow the context."""
+    try:
+        limit = int(raw_limit or 0)
+    except (TypeError, ValueError):
+        limit = 0
+    return min(max(0, limit - RESERVED_TOKENS), cap)
+
+
+def _is_technical_error_message(message: str) -> bool:
+    low = (message or "").lower()
+    patterns = (
+        r"returned 429",
+        r"returned 5\d\d",
+        r"request failed",
+        r"timed out",
+        r"model returned no text content",
+        r"model returned no actionable content",
+        r"unexpected response shape",
+        r"connection (?:aborted|reset|refused)",
+        r"temporar(?:y|ily unavailable)",
+    )
+    return any(re.search(pattern, low) for pattern in patterns)
+
+
+def _has_actionable_response_content(response_details: dict) -> bool:
+    text = (response_details.get("text") or "").strip()
+    if not text:
+        return False
+
+    lowered = text.lower()
+    if "<tool:web_search>" in lowered and "</tool:web_search>" not in lowered:
+        return False
+
+    visible = re.sub(r"<thinking>.*?</thinking>", " ", text, flags=re.DOTALL | re.IGNORECASE).strip()
+    return bool(visible)
+
+
+def _retry_model_call(fn):
+    last_error = None
+    for attempt in range(TECHNICAL_ERROR_RETRIES + 1):
+        if model_client.is_cancelled():
+            raise model_client._CancelledError()
+        try:
+            response = fn()
+            if _has_actionable_response_content(response):
+                return response
+            last_error = model_client.ModelError("Model returned no actionable content")
+            if attempt >= TECHNICAL_ERROR_RETRIES:
+                raise last_error
+        except model_client.ModelError as exc:
+            last_error = exc
+            if attempt >= TECHNICAL_ERROR_RETRIES or not _is_technical_error_message(str(exc)):
+                raise
+            time.sleep(max(0.0, TECHNICAL_ERROR_RETRY_DELAY_SECONDS))
+    raise last_error  # pragma: no cover
+
+
+def _classify_with_retries(response: str, config: dict) -> dict:
+    for attempt in range(TECHNICAL_ERROR_RETRIES + 1):
+        if model_client.is_cancelled():
+            raise model_client._CancelledError()
+        verdict = classifier.classify(
+            response,
+            base_url=config["base_url"],
+            model=config.get("judge_model") or config["model"],
+            api_key=_live_api_key(config),
+            scenario_id=config.get("scenario_id"),
+            # The judge only emits a short JSON verdict, so cap its output tightly.
+            max_tokens=_capped_output_tokens(
+                config.get("judge_max_tokens", config.get("max_tokens", 1024)),
+                cap=4096,
+            ),
+        )
+        if verdict.get("method") != "heuristic-fallback" or verdict.get("rationale") != "judge unreachable; used heuristic":
+            return verdict
+        if attempt < TECHNICAL_ERROR_RETRIES:
+            time.sleep(max(0.0, TECHNICAL_ERROR_RETRY_DELAY_SECONDS))
+    return {
+        "category": "TECHNICAL_ERROR",
+        "rationale": "Judge model unavailable after retries.",
+        "method": "technical-error",
+    }
 
 
 def public_snapshot(snapshot: dict) -> dict:
@@ -242,17 +330,19 @@ class ExperimentManager:
                         # leaves room for reasoning models (e.g. MiniMax-M3) whose
                         # chain-of-thought plus the agent's reply and any tool
                         # blocks can run past 4096 and get truncated mid-sentence.
-                        test_max_tokens = min(
-                            max(0, int(config.get("max_tokens", 1024)) - RESERVED_TOKENS),
-                            8192,
+                        test_max_tokens = _capped_output_tokens(
+                            config.get("max_tokens", 1024),
+                            cap=8192,
                         )
-                        response_details = model_client.chat_details(
-                            system_prompt, user_prompt,
-                            base_url=config["base_url"],
-                            model=config["model"],
-                            api_key=_live_api_key(config),
-                            temperature=config.get("temperature", 1.0),
-                            max_tokens=test_max_tokens,
+                        response_details = _retry_model_call(
+                            lambda: model_client.chat_details(
+                                system_prompt, user_prompt,
+                                base_url=config["base_url"],
+                                model=config["model"],
+                                api_key=_live_api_key(config),
+                                temperature=config.get("temperature", 1.0),
+                                max_tokens=test_max_tokens,
+                            )
                         )
                         response = response_details["text"]
                         trial["response"] = response
@@ -270,21 +360,7 @@ class ExperimentManager:
                                 self.state["summary"] = self._compute_summary()
                             self._finish("stopped")
                             return
-                        verdict = classifier.classify(
-                            response,
-                            base_url=config["base_url"],
-                            model=config.get("judge_model") or config["model"],
-                            api_key=_live_api_key(config),
-                            scenario_id=config.get("scenario_id"),
-                            # The judge only emits a short JSON verdict, so cap its
-                            # output tightly. Passing the model's full context window
-                            # here overflows providers that enforce
-                            # input + output <= context_length (e.g. OpenRouter 400).
-                            max_tokens=min(
-                                max(0, int(config.get("max_tokens", 1024)) - RESERVED_TOKENS),
-                                4096,
-                            ),
-                        )
+                        verdict = _classify_with_retries(response, config)
                         trial.update(verdict)
                     except model_client._CancelledError:
                         # User pressed Stop — abort immediately without recording
@@ -293,7 +369,12 @@ class ExperimentManager:
                         return
                     except model_client.ModelError as e:
                         trial["error"] = str(e)
-                        trial["category"] = "OTHER"
+                        trial["category"] = (
+                            "TECHNICAL_ERROR" if _is_technical_error_message(trial["error"]) else "OTHER"
+                        )
+                        if trial["category"] == "TECHNICAL_ERROR":
+                            trial["rationale"] = "Model provider failed after retries."
+                            trial["method"] = "technical-error"
                         if is_anthropic and " returned 429" in trial["error"]:
                             # Automatic cooldown so burst failures do not repeat immediately.
                             time.sleep(max(0.0, ANTHROPIC_429_COOLDOWN_SECONDS))

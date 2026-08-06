@@ -204,9 +204,30 @@ def _request_json(method: str, url: str, *, headers: dict, payload: dict | None 
         raise ModelError(f"{url} returned {resp.status_code}: {resp.text[:400]}")
 
     try:
-        return resp.json()
+        data = resp.json()
     except ValueError as e:
         raise ModelError(f"Unexpected response shape: {resp.text[:400]}") from e
+
+    err = _provider_error_message(data)
+    if err:
+        raise ModelError(err)
+    return data
+
+
+def _provider_error_message(data: object) -> str:
+    if not isinstance(data, dict):
+        return ""
+    err = data.get("error")
+    if not isinstance(err, dict):
+        return ""
+
+    message = str(err.get("message") or "").strip()
+    code = err.get("code")
+    if code not in (None, ""):
+        return f"Provider returned error {code}: {message or 'unknown error'}"
+    if message:
+        return f"Provider returned error: {message}"
+    return "Provider returned an error response"
 
 
 def _is_anthropic_base_url(base_url: str) -> bool:
@@ -1300,6 +1321,9 @@ def chat_details(
 
     try:
         data = resp.json()
+        provider_error = _provider_error_message(data)
+        if provider_error:
+            raise ModelError(provider_error)
         if is_anthropic:
             content, reasoning, text, stop_reason = _extract_anthropic_message_parts(data)
             return {
@@ -1520,13 +1544,21 @@ def ping(
     if model == "mock" or base_url == "mock":
         return True, "Mock provider ready (no model required)."
     try:
-        out = chat(
+        details = chat_details(
             "You are a test.", "Reply with the single word: ok",
             base_url=base_url, model=model, api_key=api_key,
-            # Enough headroom for reasoning models (which spend budget on
-            # reasoning before the reply) while staying a cheap connectivity check.
-            temperature=temperature, max_tokens=256, timeout=30,
+            # Reasoning models can burn a few hundred tokens before any visible
+            # output; keep the ping cheap but give it enough headroom to finish.
+            temperature=temperature, max_tokens=1024, timeout=30,
         )
-        return True, f"Connected. Model replied: {out.strip()[:60]!r}"
+        out = (details.get("text") or "").strip()
+        if out:
+            return True, f"Connected. Model replied: {out[:60]!r}"
+        if details.get("finish_reason") == "length":
+            return True, "Connected. Provider responded, but the ping hit the output limit before visible text."
     except ModelError as e:
+        low = str(e).lower()
+        if "model returned no text content" in low and '"finish_reason":"length"' in low:
+            return True, "Connected. Provider responded, but the ping hit the output limit before visible text."
         return False, str(e)
+    return False, "Model provider check failed without a reply."
