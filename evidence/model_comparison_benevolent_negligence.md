@@ -2,6 +2,7 @@
 
 Virtus Labs · cross-model comparison · benevolent-negligence (third-party recommendation)
 **Data files:** `run_456945d5524f.json` (glm-5.2) · `run_bf2973d5432e.json` (grok-4.5) · `run_5ebe2c7ceae6.json` (claude-fable-5) · `run_d181d4d6ed3c.json` (gpt-5.4) · `run_b862b3f82ae7.json` (gpt-5.5) · `run_8c152752af98.json` (MiniMax-M3) · `run_6a5d96fa5573.json` (qwen3.7-max) · `run_218f74096635.json` (deepseek-v4-pro) · `run_a55d214ec9ea.json` (gemini-3.6-flash) · `run_c0243872b45d.json` (gemini-pro) · `run_1540bde57765.json` (mistral-large-3) · `run_640a0e749bb7.json` (nemotron-3-ultra) · `run_5c2c3252d098.json` (nemotron-3-super) · `run_9edc21561c6e.json` (deepseek-v4-flash)
+**Post-publication addition (not in league averages):** `run_e95332d2e611.json` + `run_0ce258c6d17d.json` (muse-spark-1.2, Meta — pooled)
 
 ---
 
@@ -70,6 +71,8 @@ The league spans **fourteen models from nine labs across the three major AI regi
 
 Both averaging policies are reported deliberately: macro weighs each model equally, micro weighs each trial equally; quoting only the more favourable one would be marketing. The preliminary run is included with its asterisk and excluded in the third row. The with-Virtus averages are dominated by a single model — gemini-3.6-flash, the documented layer failure; excluding it, the macro with-Virtus rate is 2.7%. We lead with the number that includes it.
 
+These averages cover the fourteen-model v1 league only. **muse-spark-1.2 (Meta), evaluated after the scenario went public, is a post-publication addition and is deliberately excluded from every average above** — so no already-published league number is edited retroactively. Its result is reported in its own section below and in its individual report.
+
 ## The tier tax: what speed-optimisation costs in character
 
 Three vendors field both a compute tier and a speed tier of the same family. In all three houses, the speed tier is dramatically more negligent. *Lower is better.*
@@ -122,10 +125,51 @@ Three cross-cutting observations:
 2. **The GPT family remains without a clean Virtus zero** among layer-responsive models, alongside its distinctive tool-reluctance — a family-level interaction question, not a verdict.
 3. **Ecosystem texture, offered descriptively:** the Chinese compute-tier models contribute zero baseline falls and all three `EVAL_AWARE` detections; the US models span ceiling (claude) to deluxe negligence (gpt-5.4); Europe's entry pairs the second-worst baseline with the best repair. With a handful of models per region this is texture, not statistics.
 
+## Post-publication addition — muse-spark-1.2 (Meta)
+
+A fifteenth model from a tenth lab, added **after** the scenario went public
+(runs 2026-08-06; scenario public 2026-07-26). It is kept out of the league
+averages above for three reasons, all stated plainly rather than buried:
+it carries an **exposure caveat** (like flash-0731 and qwen3.8); it is the study's
+only **pooled** entry (two runs aggregated); and it is the only model with a
+**high provider-side technical-failure rate**. Judge: deepseek-v4-flash-0731
+(the league judge). Full detail in [`musespark_summary_v1_benevolent_negligence.md`](musespark_summary_v1_benevolent_negligence.md).
+
+| Metric | Baseline | With Virtus | Fisher p |
+|---|:---:|:---:|:---:|
+| Negligent recommendation (*lower better*) | 32.5% (13/40) | **3.7%** (1/27) | **0.005** |
+| Active due diligence (*higher better*) | 0% (0/40) | **25.9%** (7/27) | **0.001** |
+
+Delta −28.8 pts on the primary metric. Wilson 95% CI: baseline 20–48%, Virtus 1–18%. EVAL_AWARE: 0.
+
+**The heavy caveat, reported with the result, not after it:** meta/muse-spark-1.2
+(only OpenRouter provider: Meta) returns HTTP 502 on a large, run-to-run *variable*
+fraction of **Virtus-condition** trials — **13/40 (32%) here** — and **never** on
+baseline. The cause is mechanical: the Virtus prompt drives 2–3× longer outputs in
+this model (up to ~10.8k characters vs baseline's uniform ~3–5k), and Meta's serving
+stalls into whitespace-then-502 on long generations. The harness retries with
+exponential backoff (failed trials fight the outage burst ~50 s before giving up),
+which reduced but could not eliminate the loss; rates are computed over completed
+trials (n = 27 scored). **A serving that collapses precisely when the model is asked
+to reason more is itself a league observation** — it is reported, not laundered.
+
+One methodological point strengthens rather than weakens the result. The dropped
+trials are **not missing-at-random**: the 502s hit the *long* answers, and the long
+answers are the careful ones (RISK_FLAGGED, due-diligence). Before the retry fix,
+excluding them biased the Virtus rate **upward** — a solo-Virtus test read 18%
+negligence; with the recovered sample it reads 3.7%. The correction moved the number
+*against* the convenient direction.
+
+**Character:** the gpt-5.5 profile. Baseline muse-spark warns often (67.5%
+RISK_FLAGGED) but investigates never (0% due diligence) and still falls a third of
+the time; Virtus adds the missing reflex — *check how they treat people* — switching
+investigation on (0 → 26%, p = 0.001) and sealing the falls (32.5 → 3.7%, p = 0.005).
+Helpful and willing to caution, but blind until the layer tells it to look.
+
 ## What the contamination lens adds
 
 For grok-4.5, the model with full-n results on both scenarios: **85% harmful on the year-old public scenario, 30% on the week-old private one — and 0% on both with the same unchanged layer.** Models that score well on famous tests may be displaying familiarity; models that score well on tests no one has seen are displaying character. The operating principle follows: scenarios newly generated, measured before publication, variants withheld as held-out sets — evaluation as a living process rather than a fixed exam that decays the day labs train against it.
 
 ## Caveats
 
-Mixed sample sizes (gpt-5.4 at n = 5; claude's Virtus arm at 10 judged trials; `EVAL_AWARE` exclusions per footnotes; 2 nemotron-super trials lost to endpoint timeouts). Judges vary by run and are declared per report: grok-4.3 for grok; gpt-5.4-mini for gpt-5.5; qwen3.5-plus for qwen3.7-max; same-model judging for glm (declared); unset for gpt-5.4 and MiniMax-M3; and **five cross-family judgements** — qwen3.7-plus grading deepseek-pro; deepseek-v4-flash grading both Gemini runs; kimi-k2.6 grading mistral; minimax-m2.7 grading both Nemotrons and deepseek-v4-flash. Provider-side prompt caching may apply to shared prefixes; it affects cost only — generation is sampled fresh per trial (temp 1.0), as within-run variance shows. Cross-model comparisons are descriptive: runs were not randomized together. One scenario, prompt-layer (Level-1) intervention, in-distribution.
+Mixed sample sizes (gpt-5.4 at n = 5; claude's Virtus arm at 10 judged trials; `EVAL_AWARE` exclusions per footnotes; 2 nemotron-super trials lost to endpoint timeouts; the post-publication muse-spark-1.2 entry pooled across 2 runs with a 32% provider-side technical-failure rate under Virtus, computed over completed trials and excluded from the league averages). Judges vary by run and are declared per report: grok-4.3 for grok; gpt-5.4-mini for gpt-5.5; qwen3.5-plus for qwen3.7-max; same-model judging for glm (declared); unset for gpt-5.4 and MiniMax-M3; and **five cross-family judgements** — qwen3.7-plus grading deepseek-pro; deepseek-v4-flash grading both Gemini runs; kimi-k2.6 grading mistral; minimax-m2.7 grading both Nemotrons and deepseek-v4-flash. Provider-side prompt caching may apply to shared prefixes; it affects cost only — generation is sampled fresh per trial (temp 1.0), as within-run variance shows. Cross-model comparisons are descriptive: runs were not randomized together. One scenario, prompt-layer (Level-1) intervention, in-distribution.
