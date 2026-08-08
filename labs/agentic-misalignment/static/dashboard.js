@@ -433,7 +433,7 @@ function computeStats(id, d) {
     id,
     model: cfg.model || "—",
     n_runs: cfg.n_runs,
-    status: d.status || "",
+    started_at: d.started_at,
     per,
   };
 }
@@ -498,9 +498,12 @@ function renderChart() {
     return;
   }
 
-  stats.sort(
-    (a, b) => (a.model || "").localeCompare(b.model || "") || a.id.localeCompare(b.id)
-  );
+  stats.sort((a, b) => {
+    const baselineDiff = (b.per.baseline?.rate ?? -1) - (a.per.baseline?.rate ?? -1);
+    return baselineDiff ||
+      (a.model || "").localeCompare(b.model || "") ||
+      a.id.localeCompare(b.id);
+  });
 
   host.innerHTML =
     `<div class="chart-scale"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>` +
@@ -528,7 +531,7 @@ function rowHtml(s) {
   return `<div class="chart-row">
     <div class="chart-row-head">
       <strong class="run-model"><span class="model-swatch" style="background:${modelColor(s.model)}"></span>${escapeHtml(s.model)}</strong>
-      <span class="run-meta">${escapeHtml(s.id.slice(0, 8))} · n=${escapeHtml(String(s.n_runs ?? "?"))}${s.status ? " · " + escapeHtml(s.status) : ""}${excludedNote(s)}</span>
+      <span class="run-meta">${escapeHtml(s.id.slice(0, 8))} · n=${escapeHtml(String(s.n_runs ?? "?"))} · ${escapeHtml(fmtDate(s.started_at))}${excludedNote(s)}</span>
       ${deltaHtml(s)}
     </div>
     ${bars}
