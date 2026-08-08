@@ -22,9 +22,10 @@
   gap: 1px;
 }
 .run-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 4px 8px;
   padding: 8px 10px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -38,35 +39,90 @@
   background: var(--panel-2);
 }
 .run-row input { width: auto; accent-color: var(--restrain); flex: 0 0 auto; }
-.run-body {
+.run-model-line {
+  grid-column: 1 / -1;
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: baseline;
+  gap: 0.5ch;
   min-width: 0;
-  flex: 1;
 }
-.run-model {
+.run-model-line .run-model {
   font-weight: 500;
   color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.run-meta { color: var(--faint); font-size: 11px; }
-
-.run-status {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 2px 7px;
-  border-radius: 2px;
-  border: 1px solid var(--line);
-  color: var(--muted);
-  flex: 0 0 auto;
+.run-tries { color: var(--ink); flex: 0 0 auto; white-space: nowrap; }
+.run-meta {
+  color: var(--faint);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.run-status.s-done { color: var(--restrain); border-color: var(--restrain-dk); }
-.run-status.s-stopped { color: var(--c-veiled); border-color: #5c4a1f; }
-.run-status.s-error { color: var(--coerce); border-color: var(--coerce-dk); }
+
+.run-actions { display: flex; gap: 3px; flex: 0 0 auto; }
+.run-action {
+  width: 23px;
+  height: 23px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--muted);
+  font: 700 15px/1 var(--mono);
+  cursor: pointer;
+}
+.run-action:hover { color: var(--ink); border-color: var(--muted); }
+.run-action span { line-height: 1; }
+.run-action.delete-run { color: var(--coerce); border-color: var(--coerce-dk); }
+.run-action.delete-run:hover { color: #ff6b72; border-color: var(--coerce); }
+.run-action:focus-visible { outline: 2px solid var(--restrain); outline-offset: 1px; }
+
+.confirm-dialog {
+  width: min(430px, calc(100vw - 32px));
+  padding: 0;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--coerce-dk);
+  border-radius: 3px;
+  box-shadow: 0 20px 60px rgb(0 0 0 / 0.55);
+}
+.confirm-dialog::backdrop { background: rgb(5 8 12 / 0.78); }
+.confirm-dialog form {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  padding: 22px;
+}
+.confirm-dialog-mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  color: var(--coerce);
+  border: 1px solid var(--coerce-dk);
+  font: 700 17px/1 var(--mono);
+}
+.confirm-dialog h2 {
+  margin: 1px 0 8px;
+  color: var(--ink);
+  font: 500 18px/1.2 var(--display);
+  letter-spacing: 0;
+}
+.confirm-dialog p { margin: 0; color: var(--muted); font-size: 12px; }
+.confirm-dialog-warning { margin-top: 6px !important; color: var(--coerce) !important; }
+.confirm-dialog-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 6px;
+}
+.confirm-dialog-actions .btn { flex: 0 0 auto; padding: 8px 14px; }
 
 /* ---------- charts ---------- */
 /* 3-row layout: the header + legends stay fixed at the top, the caveat stays

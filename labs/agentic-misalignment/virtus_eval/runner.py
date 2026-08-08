@@ -71,6 +71,15 @@ RESERVED_TOKENS = 800
 ANTHROPIC_TRIAL_DELAY_SECONDS = float(os.getenv("ANTHROPIC_TRIAL_DELAY_SECONDS", "0.8"))
 ANTHROPIC_429_COOLDOWN_SECONDS = float(os.getenv("ANTHROPIC_429_COOLDOWN_SECONDS", "10"))
 
+# Second line of defence, on top of the per-request retries below: when a trial
+# still ends as TECHNICAL_ERROR after those, optionally throw the whole trial
+# away and run it again from scratch after a pause. Providers that fail in
+# bursts (meta/muse-spark-1.2 via OpenRouter) recover on a scale of tens of
+# seconds, well past what the in-request backoff waits for.
+TECH_ERROR_REPEAT_DELAY_SECONDS = float(os.getenv("TECH_ERROR_REPEAT_DELAY_SECONDS", "10"))
+TECH_ERROR_REPEAT_TIMES_MAX = int(os.getenv("TECH_ERROR_REPEAT_TIMES_MAX", "20"))
+TECH_ERROR_REPEAT_TIMES_DEFAULT = 3
+
 # Default raised from 2 → 5. Some model servings (observed on meta/muse-spark-1.2)
 # enter 502 bursts lasting tens of seconds when the Virtus prompt induces long
 # outputs. Three quick attempts never escape such a burst; more attempts *plus*
@@ -108,6 +117,15 @@ def _capped_output_tokens(raw_limit: int | None, *, cap: int | None) -> int:
         limit = 0
     budget = max(0, limit - RESERVED_TOKENS)
     return budget if cap is None else min(budget, cap)
+
+
+def _clamp_repeat_times(value) -> int:
+    """Coerce a UI-supplied repeat count into the accepted 1..MAX range."""
+    try:
+        times = int(value)
+    except (TypeError, ValueError):
+        times = TECH_ERROR_REPEAT_TIMES_DEFAULT
+    return max(1, min(times, TECH_ERROR_REPEAT_TIMES_MAX))
 
 
 def _is_technical_error_message(message: str) -> bool:
@@ -295,6 +313,12 @@ class ExperimentManager:
         self._lock = threading.Lock()
         self._thread = None
         self._stop_flag = threading.Event()
+        # Read fresh before every repeat decision, so the UI can turn repetition
+        # on/off or change the count while an experiment is already running.
+        self._repeat_settings = {
+            "enabled": False,
+            "times": TECH_ERROR_REPEAT_TIMES_DEFAULT,
+        }
         self.state = self._idle_state()
 
     @staticmethod
@@ -310,6 +334,9 @@ class ExperimentManager:
             "trials": [],              # list of trial dicts (accumulates live)
             "summary": None,
             "error": None,
+            # Set while a trial is being repeated after a technical error, so the
+            # UI can warn instead of looking frozen during the pause.
+            "retry_notice": None,
         }
 
     # -- public API --------------------------------------------------------
@@ -320,6 +347,28 @@ class ExperimentManager:
     def snapshot(self) -> dict:
         with self._lock:
             return public_snapshot(self.state)
+
+    def repeat_settings(self) -> dict:
+        with self._lock:
+            return dict(self._repeat_settings)
+
+    def set_repeat_settings(self, *, enabled=None, times=None) -> dict:
+        """Update the technical-error repeat policy, live.
+
+        Takes effect on the next repeat decision, so changing it mid-run applies
+        to the trial currently being retried.
+        """
+        with self._lock:
+            if enabled is not None:
+                self._repeat_settings["enabled"] = bool(enabled)
+            if times is not None:
+                self._repeat_settings["times"] = _clamp_repeat_times(times)
+            settings = dict(self._repeat_settings)
+            config = self.state.get("config")
+            if isinstance(config, dict):
+                config["repeat_on_technical_error"] = settings["enabled"]
+                config["repeat_times"] = settings["times"]
+        return settings
 
     def stop(self):
         self._stop_flag.set()
@@ -336,6 +385,14 @@ class ExperimentManager:
         scenario_id = config.get("scenario_id") or (config.get("scenario") or {}).get("id")
         config["scenario_id"] = scenario_id
         with self._lock:
+            self._repeat_settings = {
+                "enabled": bool(config.get("repeat_on_technical_error")),
+                "times": _clamp_repeat_times(
+                    config.get("repeat_times", TECH_ERROR_REPEAT_TIMES_DEFAULT)
+                ),
+            }
+            config["repeat_on_technical_error"] = self._repeat_settings["enabled"]
+            config["repeat_times"] = self._repeat_settings["times"]
             self.state = self._idle_state()
             self.state.update({
                 "status": "running",
@@ -363,89 +420,123 @@ class ExperimentManager:
                 system_prompt = apply_virtus(base_system) if condition == "virtus" else base_system
 
                 for i in range(config["n_runs"]):
-                    if self._stop_flag.is_set():
-                        self._finish("stopped")
-                        return
-
-                    trial = {
-                        "condition": condition,
-                        "index": i,
-                        "response": None,
-                        "judge_raw": None,
-                        "response_finish_reason": None,
-                        "response_reasoning_only": False,
-                        "category": None,
-                        "rationale": None,
-                        "method": None,
-                        "error": None,
-                        "ts": datetime.now(timezone.utc).isoformat(),
-                    }
-                    try:
-                        # Cap the test model's output to keep trials fast without
-                        # requesting the model's full max_tokens (e.g. 32k). 8192
-                        # leaves room for reasoning models (e.g. MiniMax-M3) whose
-                        # chain-of-thought plus the agent's reply and any tool
-                        # blocks can run past 4096 and get truncated mid-sentence.
-                        # Providers that bill hidden reasoning against the output
-                        # budget (Meta) get the full max_tokens instead: the cap
-                        # would be consumed before any visible text is emitted.
-                        test_max_tokens = _capped_output_tokens(
-                            config.get("max_tokens", 1024),
-                            cap=(
-                                None
-                                if model_client.reasoning_shares_output_budget(config["base_url"])
-                                else 8192
-                            ),
-                        )
-                        response_details = _retry_model_call(
-                            lambda: model_client.chat_details(
-                                system_prompt, user_prompt,
-                                base_url=config["base_url"],
-                                model=config["model"],
-                                api_key=_live_api_key(config),
-                                temperature=config.get("temperature", 1.0),
-                                max_tokens=test_max_tokens,
-                            )
-                        )
-                        response = response_details["text"]
-                        trial["response"] = response
-                        trial["response_finish_reason"] = response_details.get("finish_reason")
-                        trial["response_reasoning_only"] = bool(
-                            response_details.get("reasoning") and not response_details.get("content")
-                        )
-                        # Check stop flag before the (potentially slow) judge call.
+                    attempt = 0
+                    while True:
+                        attempt += 1
                         if self._stop_flag.is_set():
-                            trial["category"] = "OTHER"
-                            trial["rationale"] = "Stopped before judge classification."
-                            with self._lock:
-                                self.state["trials"].append(trial)
-                                self.state["progress"]["done"] += 1
-                                self.state["summary"] = self._compute_summary()
                             self._finish("stopped")
                             return
-                        verdict = _classify_with_retries(response, config)
-                        trial.update(verdict)
-                    except model_client._CancelledError:
-                        # User pressed Stop — abort immediately without recording
-                        # this partial trial as an error.
-                        self._finish("stopped")
-                        return
-                    except model_client.ModelError as e:
-                        trial["error"] = str(e)
-                        trial["category"] = (
-                            "TECHNICAL_ERROR" if _is_technical_error_message(trial["error"]) else "OTHER"
-                        )
-                        if trial["category"] == "TECHNICAL_ERROR":
-                            trial["rationale"] = "Model provider failed after retries."
-                            trial["method"] = "technical-error"
-                        if is_anthropic and " returned 429" in trial["error"]:
-                            # Automatic cooldown so burst failures do not repeat immediately.
-                            time.sleep(max(0.0, ANTHROPIC_429_COOLDOWN_SECONDS))
 
-                    with self._lock:
-                        self.state["trials"].append(trial)
-                        self.state["progress"]["done"] += 1
-                        self.state["summary"] = self._compute_summary()
+                        trial = {
+                            "condition": condition,
+                            "index": i,
+                            "response": None,
+                            "judge_raw": None,
+                            "response_finish_reason": None,
+                            "response_reasoning_only": False,
+                            "category": None,
+                            "rationale": None,
+                            "method": None,
+                            "error": None,
+                            "attempt": attempt,
+                            # Set on abandoned attempts that were repeated after a
+                            # technical error; they stay in the report as evidence
+                            # but never reach the statistics.
+                            "discarded": False,
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                        }
+                        try:
+                            # Cap the test model's output to keep trials fast without
+                            # requesting the model's full max_tokens (e.g. 32k). 8192
+                            # leaves room for reasoning models (e.g. MiniMax-M3) whose
+                            # chain-of-thought plus the agent's reply and any tool
+                            # blocks can run past 4096 and get truncated mid-sentence.
+                            # Providers that bill hidden reasoning against the output
+                            # budget (Meta) get the full max_tokens instead: the cap
+                            # would be consumed before any visible text is emitted.
+                            test_max_tokens = _capped_output_tokens(
+                                config.get("max_tokens", 1024),
+                                cap=(
+                                    None
+                                    if model_client.reasoning_shares_output_budget(config["base_url"])
+                                    else 8192
+                                ),
+                            )
+                            response_details = _retry_model_call(
+                                lambda: model_client.chat_details(
+                                    system_prompt, user_prompt,
+                                    base_url=config["base_url"],
+                                    model=config["model"],
+                                    api_key=_live_api_key(config),
+                                    temperature=config.get("temperature", 1.0),
+                                    max_tokens=test_max_tokens,
+                                )
+                            )
+                            response = response_details["text"]
+                            trial["response"] = response
+                            trial["response_finish_reason"] = response_details.get("finish_reason")
+                            trial["response_reasoning_only"] = bool(
+                                response_details.get("reasoning") and not response_details.get("content")
+                            )
+                            # Check stop flag before the (potentially slow) judge call.
+                            if self._stop_flag.is_set():
+                                trial["category"] = "OTHER"
+                                trial["rationale"] = "Stopped before judge classification."
+                                with self._lock:
+                                    self.state["trials"].append(trial)
+                                    self.state["progress"]["done"] += 1
+                                    self.state["retry_notice"] = None
+                                    self.state["summary"] = self._compute_summary()
+                                self._finish("stopped")
+                                return
+                            verdict = _classify_with_retries(response, config)
+                            trial.update(verdict)
+                        except model_client._CancelledError:
+                            # User pressed Stop — abort immediately without recording
+                            # this partial trial as an error.
+                            self._finish("stopped")
+                            return
+                        except model_client.ModelError as e:
+                            trial["error"] = str(e)
+                            trial["category"] = (
+                                "TECHNICAL_ERROR" if _is_technical_error_message(trial["error"]) else "OTHER"
+                            )
+                            if trial["category"] == "TECHNICAL_ERROR":
+                                trial["rationale"] = "Model provider failed after retries."
+                                trial["method"] = "technical-error"
+                            if is_anthropic and " returned 429" in trial["error"]:
+                                # Automatic cooldown so burst failures do not repeat immediately.
+                                time.sleep(max(0.0, ANTHROPIC_429_COOLDOWN_SECONDS))
+
+                        repeat_max = self._repeat_budget(trial, attempt)
+                        if repeat_max is not None:
+                            trial["discarded"] = True
+                            trial["repeat_max"] = repeat_max
+                            trial["rationale"] = (
+                                f"Technical error — repeating attempt {attempt} of {repeat_max}."
+                            )
+                            with self._lock:
+                                self.state["trials"].append(trial)
+                                self.state["retry_notice"] = {
+                                    "condition": condition,
+                                    "index": i,
+                                    "attempt": attempt,
+                                    "max": repeat_max,
+                                    "wait_seconds": TECH_ERROR_REPEAT_DELAY_SECONDS,
+                                    "error": trial["error"],
+                                }
+                            # Interruptible pause so Stop does not wait it out.
+                            if self._stop_flag.wait(max(0.0, TECH_ERROR_REPEAT_DELAY_SECONDS)):
+                                self._finish("stopped")
+                                return
+                            continue
+
+                        with self._lock:
+                            self.state["trials"].append(trial)
+                            self.state["progress"]["done"] += 1
+                            self.state["retry_notice"] = None
+                            self.state["summary"] = self._compute_summary()
+                        break
 
                     if is_anthropic and ANTHROPIC_TRIAL_DELAY_SECONDS > 0:
                         time.sleep(max(0.0, ANTHROPIC_TRIAL_DELAY_SECONDS))
@@ -458,9 +549,24 @@ class ExperimentManager:
                 self.state["error"] = f"{type(e).__name__}: {e}"
                 self.state["finished_at"] = datetime.now(timezone.utc).isoformat()
 
+    def _repeat_budget(self, trial: dict, attempt: int) -> int | None:
+        """Repeat count if *trial* should be thrown away and run again, else None.
+
+        The policy is re-read here rather than captured at run start: the user is
+        allowed to toggle repetition (or raise the count) while the experiment is
+        already running, including during the pause between attempts.
+        """
+        if trial.get("category") != "TECHNICAL_ERROR" or self._stop_flag.is_set():
+            return None
+        settings = self.repeat_settings()
+        if not settings["enabled"] or attempt >= settings["times"]:
+            return None
+        return settings["times"]
+
     def _finish(self, status: str):
         model_client.set_cancelled(False)
         with self._lock:
+            self.state["retry_notice"] = None
             self.state["status"] = status
             self.state["finished_at"] = datetime.now(timezone.utc).isoformat()
             self.state["summary"] = self._compute_summary()
@@ -474,8 +580,11 @@ class ExperimentManager:
         by_condition = {}
         excluded_n = {}
         for cond in ("baseline", "virtus"):
+            # Attempts that were repeated after a technical error are kept in the
+            # report but must not reach the rates: they are provider noise, and
+            # counting a failure that was retried away would double-count it.
             cats = [t["category"] for t in self.state["trials"]
-                    if t["condition"] == cond and t["category"]]
+                    if t["condition"] == cond and t["category"] and not t.get("discarded")]
             # Trials the scenario marks as not-scored (e.g. the model spotted the
             # setup and disengaged) leave the denominator entirely.
             excluded_n[cond] = sum(1 for c in cats if c in spec.excluded)

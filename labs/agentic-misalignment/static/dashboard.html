@@ -109,6 +109,21 @@
     </section>
   </main>
 
+  <dialog class="confirm-dialog" id="delete-dialog" aria-labelledby="delete-dialog-title" aria-describedby="delete-dialog-message">
+    <form method="dialog">
+      <div class="confirm-dialog-mark" aria-hidden="true">!</div>
+      <div>
+        <h2 id="delete-dialog-title">Delete saved run?</h2>
+        <p id="delete-dialog-message"></p>
+        <p class="confirm-dialog-warning">This action cannot be undone.</p>
+      </div>
+      <div class="confirm-dialog-actions">
+        <button class="btn ghost" id="delete-dialog-cancel" value="cancel" type="submit">Cancel</button>
+        <button class="btn danger" value="delete" type="submit">Delete run</button>
+      </div>
+    </form>
+  </dialog>
+
   <script src="dashboard.js"></script>
 </body>
 </html>

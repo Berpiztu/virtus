@@ -1,9 +1,8 @@
 "use strict";
 
 // Virtus Results Dashboard — standalone module.
-// Reads the existing /api/results and /api/results/<id> endpoints only; it does
-// not touch the runner. Everything (harmful rates, chart) is computed here so
-// no backend change is required.
+// Reads and manages reports through /api/results and /api/results/<id>.
+// Everything related to rates and charts is computed locally.
 
 const $ = (id) => document.getElementById(id);
 
@@ -146,6 +145,11 @@ async function loadRuns(scenarioId) {
   // Drop aborted/partial runs — only completed (or errored/running) runs are
   // meaningful on the dashboard.
   runs = runs.filter((r) => r && r.run_id && r.status !== "stopped");
+  runs.sort((a, b) => {
+    const aTime = Date.parse(a.started_at) || 0;
+    const bTime = Date.parse(b.started_at) || 0;
+    return bTime - aTime || a.run_id.localeCompare(b.run_id);
+  });
   buildModelColors();
   populateNrunsFilter();
   await restoreState();
@@ -239,11 +243,15 @@ function modelColor(m) {
 // ---------- run list ----------
 function populateNrunsFilter() {
   const sel = $("filter-nruns");
+  const currentValue = sel.value;
   const vals = [...new Set(runs.map((r) => r.n_runs).filter((v) => v != null))]
     .sort((a, b) => a - b);
   sel.innerHTML =
     '<option value="">all</option>' +
     vals.map((v) => `<option value="${v}">${v}</option>`).join("");
+  if ([...sel.options].some((option) => option.value === currentValue)) {
+    sel.value = currentValue;
+  }
 }
 
 function filteredRuns() {
@@ -273,20 +281,87 @@ function renderList() {
       const id = r.run_id;
       const checked = selected.has(id) ? "checked" : "";
       const date = fmtDate(r.started_at);
-      const status = r.status || "";
-      return `<label class="run-row${checked ? " is-selected" : ""}">
-        <input type="checkbox" data-id="${escapeHtml(id)}" ${checked}>
-        <span class="run-body">
+      return `<div class="run-row${checked ? " is-selected" : ""}">
+        <span class="run-model-line">
           <span class="run-model">${escapeHtml(r.model || "—")}</span>
-          <span class="run-meta">${escapeHtml(id.slice(0, 8))} · n=${escapeHtml(String(r.n_runs ?? "?"))} · ${escapeHtml(date)}</span>
+          <span class="run-tries">(${escapeHtml(String(r.n_runs ?? "?"))} trys)</span>
         </span>
-        <span class="run-status s-${escapeHtml(status)}">${escapeHtml(status)}</span>
-      </label>`;
+        <input type="checkbox" data-id="${escapeHtml(id)}" ${checked}>
+        <span class="run-meta">${escapeHtml(id.slice(0, 8))} · ${escapeHtml(date)}</span>
+        <span class="run-actions">
+          <button class="run-action download-run" type="button" data-id="${escapeHtml(id)}" title="Download JSON" aria-label="Download JSON"><span aria-hidden="true">&#128190;</span></button>
+          <button class="run-action delete-run" type="button" data-id="${escapeHtml(id)}" title="Delete run" aria-label="Delete run"><span aria-hidden="true">&#128465;</span></button>
+        </span>
+      </div>`;
     })
     .join("");
 
   host.querySelectorAll("input[type=checkbox]").forEach((cb) => {
     cb.addEventListener("change", () => toggle(cb.dataset.id, cb.checked));
+  });
+  host.querySelectorAll(".run-row").forEach((row) => {
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("input, button")) return;
+      const cb = row.querySelector("input[type=checkbox]");
+      cb.checked = !cb.checked;
+      toggle(cb.dataset.id, cb.checked);
+    });
+  });
+  host.querySelectorAll(".download-run").forEach((button) => {
+    button.addEventListener("click", () => downloadRun(button.dataset.id));
+  });
+  host.querySelectorAll(".delete-run").forEach((button) => {
+    button.addEventListener("click", () => deleteRun(button.dataset.id));
+  });
+}
+
+async function downloadRun(id) {
+  const response = await fetch(
+    `/api/results/${encodeURIComponent(id)}?scenario=${encodeURIComponent(currentScenarioId)}`
+  );
+  if (!response.ok) {
+    window.alert("Could not download this run.");
+    return;
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `run_${id}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+async function deleteRun(id) {
+  const run = runs.find((item) => item.run_id === id);
+  if (!(await confirmRunDeletion(run))) return;
+  const response = await fetch(
+    `/api/results/${encodeURIComponent(id)}?scenario=${encodeURIComponent(currentScenarioId)}`,
+    { method: "DELETE" }
+  );
+  if (!response.ok) {
+    window.alert("Could not delete this run.");
+    return;
+  }
+  runs = runs.filter((run) => run.run_id !== id);
+  selected.delete(id);
+  detailCache.delete(id);
+  buildModelColors();
+  populateNrunsFilter();
+  renderList();
+  renderCharts();
+  updateCount();
+  saveState();
+}
+
+function confirmRunDeletion(run) {
+  const dialog = $("delete-dialog");
+  const model = run?.model || "Unknown model";
+  $("delete-dialog-message").textContent = `${model} · ${run?.run_id.slice(0, 8) || "unknown run"}`;
+  dialog.showModal();
+  $("delete-dialog-cancel").focus();
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "delete"), { once: true });
   });
 }
 

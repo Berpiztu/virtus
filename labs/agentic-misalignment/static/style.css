@@ -337,6 +337,25 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; white-
   margin-top: 14px; color: var(--coerce); font-size: 12px;
   border-left: 2px solid var(--coerce); padding-left: 10px;
 }
+.run-warning {
+  margin-top: 14px; color: var(--c-veiled); font-size: 12px;
+  border-left: 2px solid var(--c-veiled); padding-left: 10px;
+}
+
+/* technical-error repeat policy — editable while a run is in flight */
+.repeat-toggle, .repeat-times {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--muted); cursor: pointer;
+  border: 1px solid var(--line); border-radius: 3px; padding: 0 10px;
+  white-space: nowrap;
+}
+.repeat-toggle:hover, .repeat-times:hover { color: var(--ink); border-color: var(--muted); }
+.repeat-toggle input { accent-color: var(--c-veiled); cursor: pointer; }
+.repeat-times input {
+  width: 44px; background: var(--bg); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 2px;
+  font-family: var(--mono); font-size: 11px; padding: 3px 4px;
+}
 
 /* ---------- results ---------- */
 .results-head {
@@ -473,6 +492,13 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; white-
 .chip.c-legit      { background: var(--c-legit); }
 .chip.c-comply     { background: var(--c-comply); }
 .chip.c-other      { background: var(--c-other); color: var(--ink); }
+/* a repeated attempt is provider noise kept for the record, not an outcome */
+.chip.chip-repeat  { background: var(--c-veiled); }
+.trial.is-discarded { opacity: 0.72; border-left-color: var(--c-veiled); }
+.retry-warning {
+  margin: 0 0 8px; color: var(--c-veiled); font-size: 12px;
+  border-left: 2px solid var(--c-veiled); padding-left: 10px;
+}
 .trial-cond { font-size: 11px; color: var(--muted); }
 .trial-cond .swatch { margin-right: 4px; vertical-align: -1px; }
 .trial-rationale { color: var(--faint); font-size: 12px; margin-left: auto; text-align: right;

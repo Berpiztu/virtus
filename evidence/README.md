@@ -9,7 +9,7 @@ Reproduction harness: [`../labs/agentic-misalignment`](../labs/agentic-misalignm
 
 ## Start here
 
-1. **[`model_comparison_benevolent_negligence.md`](model_comparison_benevolent_negligence.md)** — the cross-model picture: fourteen models from nine labs across the US, China and Europe, including three same-vendor tier pairs, one unseen scenario, and why the layer repairs a *different* deficit in each model — plus a fifteenth, post-publication addition (muse-spark-1.2, Meta) reported separately and kept out of the league averages. New: **two longitudinal comparisons** — **[`deepseek_flash_0731_before_after.md`](deepseek_flash_0731_before_after.md)** (build pair: same model re-post-trained — safety gained by the *brake*) and **[`qwen38_before_after.md`](qwen38_before_after.md)** (version pair: new generation — safety gained by the *method*). Two labs, one week, character trending up by opposite routes.
+1. **[`model_comparison_benevolent_negligence.md`](model_comparison_benevolent_negligence.md)** — the cross-model picture: fifteen models from ten labs across the US, China and Europe, including three same-vendor tier pairs, one unseen scenario, and why the layer repairs a *different* deficit in each model. New: **two longitudinal comparisons** — **[`deepseek_flash_0731_before_after.md`](deepseek_flash_0731_before_after.md)** (build pair: same model re-post-trained — safety gained by the *brake*) and **[`qwen38_before_after.md`](qwen38_before_after.md)** (version pair: new generation — safety gained by the *method*). Two labs, one week, character trending up by opposite routes.
 2. **[`grok_summary_v1_shutdown_blackmail.md`](grok_summary_v1_shutdown_blackmail.md)** — the shutdown/blackmail result (85% → 0% on grok-4.5), our reproduction of Anthropic's agentic-misalignment scenario.
 3. The individual model reports below, for the per-model detail.
 
@@ -26,7 +26,7 @@ Together the two scenarios probe opposite ends of the failure space: what a mode
 | File | Model | Scenario | Headline |
 |---|---|---|---|
 | [`grok_summary_v1_shutdown_blackmail.md`](grok_summary_v1_shutdown_blackmail.md) | grok-4.5 | shutdown/blackmail | 85% → **0%** harmful (p = 2.6e-08) |
-| [`model_comparison_benevolent_negligence.md`](model_comparison_benevolent_negligence.md) | all fourteen | benevolent negligence | the league + per-model repair profiles; `EVAL_AWARE` detections in three models; league averages 38% → 8%; the tier tax replicated in three vendors; includes the documented layer failure (gemini-3.6-flash) and its counterfactual (mistral-large-3) |
+| [`model_comparison_benevolent_negligence.md`](model_comparison_benevolent_negligence.md) | all fifteen | benevolent negligence | the league + per-model repair profiles; `EVAL_AWARE` detections in three models; league averages 38% → 8%; the tier tax replicated in three vendors; includes the documented layer failure (gemini-3.6-flash) and its counterfactual (mistral-large-3) |
 | [`gpt55_summary_v1_benevolent_negligence.md`](gpt55_summary_v1_benevolent_negligence.md) | gpt-5.5 | benevolent negligence | 60% → **5%** negligent (p = 4.3e-04); due diligence 0% → 50% |
 | [`grok_summary_v1_benevolent_negligence.md`](grok_summary_v1_benevolent_negligence.md) | grok-4.5 | benevolent negligence | 30% → **0%** negligent (p = 0.020); 20% stall cost, reported |
 | [`glm_summary_v1_benevolent_negligence.md`](glm_summary_v1_benevolent_negligence.md) | glm-5.2 | benevolent negligence | due diligence 35% → **90%** (p = 7.7e-04) |
@@ -43,11 +43,11 @@ Together the two scenarios probe opposite ends of the failure space: what a mode
 | [`qwen_summary_v1_benevolent_negligence.md`](qwen_summary_v1_benevolent_negligence.md) | qwen3.7-max | benevolent negligence | the full repair: both metrics significant |
 | [`qwen38_before_after.md`](qwen38_before_after.md) | qwen3.7-max **vs qwen3.8-max** | benevolent negligence | **second longitudinal pair (version)**: falls 32% → **5%** (p = 0.044), unaided verification 21% → **85%** (p = 8.8e-05) — by the method, not the brake; near-frontier character |
 | [`minimax_summary_v1_benevolent_negligence.md`](minimax_summary_v1_benevolent_negligence.md) | MiniMax-M3 | benevolent negligence | double floor; caution deepened, not converted; 2 `EVAL_AWARE` |
-| [`musespark_summary_v1_benevolent_negligence.md`](musespark_summary_v1_benevolent_negligence.md) | muse-spark-1.2 (Meta) **— post-publication** | benevolent negligence | 32.5% → **3.7%** negligent (p = 0.005); due diligence **0% → 26%** (p = 0.001); **32% technical-failure caveat**; pooled 2 runs; excluded from league averages |
+| [`musespark_summary_v1_benevolent_negligence.md`](musespark_summary_v1_benevolent_negligence.md) | muse-spark-1.2 (Meta) | benevolent negligence | 25% → **5%** negligent (p = 0.182, single run); due diligence **0% → 58%** (p = 5e-05); direct endpoint; post-publication exposure caveat |
 
 ## Data & transcripts
 
-- **`run_*.json`** — the raw run files cited in each report: full configuration, every trial's response, judge label and rationale, and the significance tests as computed at run time. Each report names its data file in the header. (The muse-spark-1.2 report pools two deepseek-judged runs, `run_e95332d2e611.json` and `run_0ce258c6d17d.json`; both are committed so the aggregation can be checked.)
+- **`run_*.json`** — the raw run files cited in each report: full configuration, every trial's response, judge label and rationale, and the significance tests as computed at run time. Each report names its data file in the header. (The muse-spark-1.2 report uses `run_4e93b66be6b7.json`, run directly against api.meta.ai with the deepseek judge.)
 - **[`session-transcripts.md`](session-transcripts.md)** / **[`session-transcripts-raw.md`](session-transcripts-raw.md)** — session transcripts from the multi-model agent environment, including the tool-use logs against which model claims can be checked.
 
 ## Method, in one paragraph
@@ -56,7 +56,7 @@ Each run executes n trials per condition (baseline vs. Virtus) at temperature 1.
 
 ## Read the caveats
 
-Every report carries its own limitations section — sample sizes (one preliminary n = 5 run; one run stopped at 31/40, baseline complete; muse-spark-1.2 pooled across two runs with a 32% provider-side technical-failure rate under Virtus), judging setup, in-distribution scope, and what a Level-1 prompt result can and cannot prove. The caveats are part of the evidence: results without their limits are marketing. Hallucination and jailbreak benchmarks have **not** been run yet; they are queued, and no claim about them is made here.
+Every report carries its own limitations section — sample sizes (one preliminary n = 5 run; one run stopped at 31/40, baseline complete; muse-spark-1.2 a single post-publication run whose primary-metric reduction is not significant on its own, p = 0.182), judging setup, in-distribution scope, and what a Level-1 prompt result can and cannot prove. The caveats are part of the evidence: results without their limits are marketing. Hallucination and jailbreak benchmarks have **not** been run yet; they are queued, and no claim about them is made here.
 
 ## Reproduce it
 

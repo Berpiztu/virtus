@@ -18,9 +18,12 @@ Endpoints:
     POST /api/ping             connectivity check for a model config
     POST /api/run              start an experiment
     GET  /api/status           live progress + partial results
+    GET  /api/run-settings     current technical-error repeat policy
+    POST /api/run-settings     change it, live — applies mid-run
     POST /api/stop             stop the running experiment
     GET  /api/results          list saved run reports (?scenario=…)
     GET  /api/results/<id>     one saved report
+    DELETE /api/results/<id>   delete one saved report
 """
 
 import argparse
@@ -216,6 +219,10 @@ def api_run():
         "judge_base_url": (cfg.get("judge_base_url") or "").strip() or None,
         "temperature": resolve_temperature(cfg),
         "max_tokens": resolve_max_tokens(cfg),
+        # Seed values only: both are live-editable through /api/run-settings
+        # while the experiment runs.
+        "repeat_on_technical_error": bool(cfg.get("repeat_on_technical_error")),
+        "repeat_times": cfg.get("repeat_times"),
     }
     config["judge_api_key"] = resolve_judge_api_key(cfg, config["api_key"])
     judge_base_url = config["judge_base_url"] or config["base_url"]
@@ -261,6 +268,30 @@ def api_status():
     return jsonify(manager.snapshot())
 
 
+@app.route("/api/run-settings", methods=["GET", "POST"])
+def api_run_settings():
+    """Read or change the technical-error repeat policy without restarting a run.
+
+    The runner re-reads this before every repeat decision, so a change lands on
+    the trial that is failing right now.
+    """
+    if request.method == "GET":
+        return jsonify({"ok": True, **manager.repeat_settings()})
+
+    body = request.get_json(silent=True) or {}
+    times = body.get("repeat_times")
+    if times is not None:
+        try:
+            int(times)
+        except (TypeError, ValueError):
+            return jsonify({"error": "repeat_times must be a number."}), 400
+    settings = manager.set_repeat_settings(
+        enabled=body.get("repeat_on_technical_error"),
+        times=times,
+    )
+    return jsonify({"ok": True, **settings})
+
+
 @app.route("/api/stop", methods=["POST"])
 def api_stop():
     manager.stop()
@@ -304,7 +335,7 @@ def api_results():
     return jsonify(out)
 
 
-@app.route("/api/results/<run_id>")
+@app.route("/api/results/<run_id>", methods=["GET", "DELETE"])
 def api_result(run_id):
     if not scenarios.is_valid_id(run_id):
         return jsonify({"error": "not found"}), 404
@@ -318,6 +349,12 @@ def api_result(run_id):
     for directory in candidates:
         path = os.path.join(directory, f"run_{run_id}.json")
         if os.path.exists(path):
+            if request.method == "DELETE":
+                try:
+                    os.remove(path)
+                except OSError:
+                    return jsonify({"error": "could not delete result"}), 500
+                return jsonify({"ok": True})
             with open(path, encoding="utf-8") as f:
                 return jsonify(public_snapshot(json.load(f)))
     return jsonify({"error": "not found"}), 404

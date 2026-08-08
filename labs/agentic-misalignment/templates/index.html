@@ -111,10 +111,19 @@
       </details>
 
       <div class="actions">
-        <button id="btn-ping" class="btn ghost">Test connection</button>
+        <label class="repeat-toggle" for="repeat_on_error"
+               title="If a trial still fails with a technical error after the per-request retries, discard it, wait 10s and run the whole trial again. Can be changed while the experiment is running.">
+          <input type="checkbox" id="repeat_on_error">
+          <span>repeat?</span>
+        </label>
+        <label class="repeat-times" for="repeat_times" title="Maximum attempts per trial, including the first one.">
+          <span>×</span>
+          <input type="number" id="repeat_times" min="1" max="20" step="1" value="3">
+        </label>
         <button id="btn-run" class="btn primary">Run experiment</button>
         <button id="btn-stop" class="btn danger" hidden>Stop</button>
       </div>
+      <p id="run-warning" class="run-warning" hidden></p>
       <p id="run-error" class="run-error" hidden></p>
     </section>
 

@@ -1,0 +1,19 @@
+[0;1;32m●[0m hermes-ai-5069.service - Hermes AI (5069)
+     Loaded: loaded (]8;;file://ubuntu/etc/systemd/system/hermes-ai-5069.service/etc/systemd/system/hermes-ai-5069.service]8;;; [0;1;32menabled[0m; preset: [0;1;32menabled[0m)
+     Active: [0;1;32mactive (running)[0m since Sat 2026-08-08 12:35:42 UTC; 12s ago
+   Main PID: 3555342 (python)
+      Tasks: 1 (limit: 19062)
+     Memory: 24.9M (peak: 25.2M)
+        CPU: 143ms
+     CGroup: /system.slice/hermes-ai-5069.service
+             └─[0;38;5;245m3555342 /root/berpiztu/virtus/labs/agentic-misalignment/.venv/bin/python /root/berpiztu/virtus/labs/agentic-misalignment/app.py --host 127.0.0.1 --port 5069[0m
+
+Aug 08 12:35:42 ubuntu systemd[1]: Started hermes-ai-5069.service - Hermes AI (5069).
+Aug 08 12:35:42 ubuntu python[3555342]:  * Tip: There are .env files present. Install python-dotenv to use them.
+Aug 08 12:35:42 ubuntu python[3555342]:   Virtus agentic-misalignment test → http://127.0.0.1:5069
+Aug 08 12:35:42 ubuntu python[3555342]:  * Serving Flask app 'app'
+Aug 08 12:35:42 ubuntu python[3555342]:  * Debug mode: off
+Aug 08 12:35:42 ubuntu python[3555342]: WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+Aug 08 12:35:42 ubuntu python[3555342]:  * Running on http://127.0.0.1:5069
+Aug 08 12:35:42 ubuntu python[3555342]: Press CTRL+C to quit
+Aug 08 12:35:46 ubuntu python[3555342]: 127.0.0.1 - - [08/Aug/2026 12:35:46] "GET / HTTP/1.1" 200 -

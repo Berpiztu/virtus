@@ -36,7 +36,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("scenario").addEventListener("change", () => applyScenario($("scenario").value));
   $("provider").addEventListener("change", handleProviderChange);
   $("judge_provider").addEventListener("change", handleJudgeProviderChange);
-  $("btn-ping").addEventListener("click", ping);
+  $("repeat_on_error").addEventListener("change", pushRepeatSettings);
+  $("repeat_times").addEventListener("change", pushRepeatSettings);
   $("btn-run").addEventListener("click", run);
   $("btn-stop").addEventListener("click", stop);
   $("btn-download-json").addEventListener("click", downloadResultsJson);
@@ -111,6 +112,10 @@ async function restoreConfigFromStatus(st) {
   }
   if (cfg.n_runs != null) $("n_runs").value = cfg.n_runs;
   if (cfg.temperature != null) $("temperature").value = cfg.temperature;
+  if (cfg.repeat_on_technical_error != null) {
+    $("repeat_on_error").checked = !!cfg.repeat_on_technical_error;
+  }
+  if (cfg.repeat_times != null) $("repeat_times").value = cfg.repeat_times;
 
   if (Array.isArray(cfg.conditions)) {
     $("cond_baseline").checked = cfg.conditions.includes("baseline");
@@ -208,20 +213,21 @@ function renderCategoryFilter() {
   applyFilter();
 }
 
-// ---------- connection test ----------
-async function ping() {
-  const badge = $("provider-status");
-  badge.hidden = false;
-  badge.className = "provider-status idle";
-  badge.textContent = "checking…";
-  const r = await fetch("/api/ping", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(config()),
-  });
-  const d = await r.json();
-  badge.className = "provider-status " + (d.ok ? "ok" : "bad");
-  badge.textContent = (d.ok ? "ok - " : "error - ") + d.message;
-  if (d.ok) await refreshModels();
+// ---------- technical-error repeat policy ----------
+// Pushed on every change, running or not: the runner re-reads the policy before
+// each repeat decision, so a change lands on the trial that is failing now.
+async function pushRepeatSettings() {
+  const times = Math.max(1, Math.min(parseInt($("repeat_times").value, 10) || 1, 20));
+  $("repeat_times").value = times;
+  try {
+    await fetch("/api/run-settings", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        repeat_on_technical_error: $("repeat_on_error").checked,
+        repeat_times: times,
+      }),
+    });
+  } catch (e) { /* the value still travels with the next /api/run */ }
 }
 
 async function initializeProviders() {
@@ -370,7 +376,7 @@ function setModelLoadingState(loading) {
     configPanel.classList.toggle("is-loading", loading);
   }
 
-  for (const id of ["base_url", "api_key", "model", "btn-ping", "btn-run"]) {
+  for (const id of ["base_url", "api_key", "model", "btn-run"]) {
     const element = $(id);
     if (element) {
       element.disabled = loading;
@@ -720,6 +726,9 @@ function config() {
     judge_api_key: judgeProvider ? (judgeProvider.api_key || "").trim() : "",
     n_runs: parseInt($("n_runs").value, 10),
     temperature: parseFloat($("temperature").value),
+    // Both stay editable mid-run through /api/run-settings; these are the seeds.
+    repeat_on_technical_error: $("repeat_on_error").checked,
+    repeat_times: Math.max(1, Math.min(parseInt($("repeat_times").value, 10) || 1, 20)),
     max_tokens: maxTokens,
     conditions,
     // The id picks the judge taxonomy and the results folder; the prompts are
@@ -806,6 +815,7 @@ async function poll() {
   updateProgress(st);
   appendNewTrials(st);
   updateTally(st);
+  updateRetryWarning(st);
   if (st.status !== "running") {
     clearInterval(pollTimer); pollTimer = null;
     setRunning(false);
@@ -814,6 +824,25 @@ async function poll() {
       $("run-error").textContent = st.error || "Experiment failed.";
     }
   }
+}
+
+// The run is not frozen while a trial is being repeated — it is waiting out the
+// provider. Say so where a failure would otherwise be the only visible sign.
+function updateRetryWarning(st) {
+  const box = $("run-warning");
+  if (!box) return;
+  const notice = st && st.status === "running" ? st.retry_notice : null;
+  if (!notice) {
+    box.hidden = true;
+    box.textContent = "";
+    return;
+  }
+  const wait = Math.round(notice.wait_seconds || 0);
+  box.hidden = false;
+  box.textContent =
+    `⚠ Technical error on ${notice.condition} #${notice.index + 1} — ` +
+    `repeating attempt ${notice.attempt} of ${notice.max} in ${wait}s. ` +
+    `The failed attempt is discarded and not counted.`;
 }
 
 async function downloadResultsJson() {
@@ -912,6 +941,8 @@ function resetResults() {
   $("ci-virtus").textContent = "";
   $("comparison").hidden = true;
   $("transcripts").innerHTML = "";
+  const warning = $("run-warning");
+  if (warning) { warning.hidden = true; warning.textContent = ""; }
   $("progress-label").textContent = "";
   $("progress-label").classList.remove("is-running");
   stopProgressDots();
@@ -922,6 +953,7 @@ function fullRender(st) {
   appendNewTrials(st);
   updateTally(st);
   updateProgress(st);
+  updateRetryWarning(st);
 }
 
 function updateProgress(st) {
@@ -977,7 +1009,9 @@ function appendNewTrials(st) {
   const trials = st.trials || [];
   for (let i = renderedTrials; i < trials.length; i++) {
     const t = trials[i];
-    addCell(t);
+    // Discarded attempts get no cell: the grid mirrors the progress counter,
+    // which only advances once per completed trial.
+    if (!t.discarded) addCell(t);
     addTranscript(t, i);
   }
   renderedTrials = trials.length;
@@ -995,12 +1029,18 @@ function addCell(t) {
 
 function addTranscript(t, i) {
   const div = document.createElement("div");
-  div.className = "trial " + catMeta(t.category).cls;
+  div.className = "trial " + catMeta(t.category).cls + (t.discarded ? " is-discarded" : "");
   div.dataset.cat = t.category || "OTHER";
   div.dataset.cond = t.condition;
 
   const swatch = t.condition === "virtus" ? "virt" : "base";
-  const body = t.error
+  // A repeated attempt is a warning, not a result: it never reaches the stats,
+  // so it says what it is doing instead of showing a red error.
+  const body = t.discarded
+    ? `<p class="retry-warning">⚠ Technical error — repeating attempt ${t.attempt} of ${t.repeat_max}, ` +
+      `discarded (not counted in the statistics).</p>` +
+      `<pre>${escapeHtml(t.error || "")}</pre>`
+    : t.error
     ? `<pre>ERROR: ${escapeHtml(t.error)}</pre>`
     : `<pre>${escapeHtml(t.response || "")}</pre>`;
   const judgeRaw = t.judge_raw
@@ -1011,6 +1051,7 @@ function addTranscript(t, i) {
   div.innerHTML = `
     <div class="trial-head">
       <span class="chip ${escapeHtml(meta.cls)}" title="${escapeHtml(meta.tooltip)}">${escapeHtml(meta.label)}</span>
+      ${t.discarded ? `<span class="chip chip-repeat">repeat ${t.attempt}/${t.repeat_max}</span>` : ""}
       <span class="trial-cond"><span class="swatch ${swatch}"></span>${t.condition} #${t.index + 1}</span>
       <span class="trial-rationale">${escapeHtml(t.rationale || "")}</span>
     </div>
