@@ -17,17 +17,25 @@ const SCENARIO_STORE_KEY = "virtus-scenario";
 let pollTimer = null;
 let renderedTrials = 0;
 let modelMetadata = new Map();
+// Model list for the judge's own provider. `null` means the judge follows the
+// test provider, so the judge combo reads from `modelMetadata`.
+let judgeModelMetadata = null;
 let latestStatus = null;
 let providerConfigs = new Map();
 let isModelLoading = false;
 let modelLoadRequestId = 0;
 let modelLoadController = null;
+let judgeLoadRequestId = 0;
+let judgeLoadController = null;
 let isRunStarting = false;
+
+const judgeMetadataMap = () => judgeModelMetadata || modelMetadata;
 
 // ---------- init ----------
 window.addEventListener("DOMContentLoaded", async () => {
   $("scenario").addEventListener("change", () => applyScenario($("scenario").value));
   $("provider").addEventListener("change", handleProviderChange);
+  $("judge_provider").addEventListener("change", handleJudgeProviderChange);
   $("btn-ping").addEventListener("click", ping);
   $("btn-run").addEventListener("click", run);
   $("btn-stop").addEventListener("click", stop);
@@ -93,6 +101,10 @@ async function restoreConfigFromStatus(st) {
     updateModelLimitHint();
   }
 
+  if (cfg.judge_provider && providerConfigs.has(cfg.judge_provider)) {
+    $("judge_provider").value = cfg.judge_provider;
+    await refreshJudgeModels();
+  }
   if (cfg.judge_model != null) {
     $("judge_model").value = cfg.judge_model;
     judgeCombo.updateClear();
@@ -244,6 +256,7 @@ function setProviderOptions(providers, defaultProvider) {
   const names = Array.from(providerConfigs.keys());
   if (!names.length) {
     select.innerHTML = '<option value="">Manual</option>';
+    setJudgeProviderOptions([]);
     return;
   }
 
@@ -252,6 +265,20 @@ function setProviderOptions(providers, defaultProvider) {
     .join("");
 
   select.value = names.includes(defaultProvider) ? defaultProvider : names[0];
+  setJudgeProviderOptions(names);
+}
+
+// The judge can run on a different provider than the model under test. An empty
+// selection keeps today's behaviour: same provider (and, with an empty judge
+// model, same model) as the test.
+function setJudgeProviderOptions(names) {
+  const select = $("judge_provider");
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML =
+    '<option value="">(same as test)</option>' +
+    names.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("");
+  select.value = names.includes(current) ? current : "";
 }
 
 async function handleProviderChange() {
@@ -266,6 +293,67 @@ async function applySelectedProvider() {
   }
   updateProviderStatusIdle();
   await refreshModels();
+}
+
+async function handleJudgeProviderChange() {
+  const input = $("judge_model");
+  input.value = "";
+  input.dataset.maxTokens = "";
+  judgeCombo.close();
+  judgeCombo.updateClear();
+  await refreshJudgeModels();
+  updateModelLimitHint();
+}
+
+// Load the model list for the judge's own provider so its combo offers that
+// provider's models instead of the test provider's.
+async function refreshJudgeModels() {
+  const providerName = $("judge_provider").value;
+  const provider = providerConfigs.get(providerName);
+  const requestId = ++judgeLoadRequestId;
+  if (judgeLoadController) judgeLoadController.abort();
+
+  if (!provider) {
+    judgeModelMetadata = null;
+    $("judge_model").placeholder = "(same as test)";
+    return;
+  }
+
+  judgeLoadController = new AbortController();
+  judgeModelMetadata = new Map();
+  $("judge_model").placeholder = "Loading models...";
+
+  try {
+    const r = await fetch("/api/models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        base_url: provider.base_url || "",
+        api_key: provider.api_key || "",
+        provider: providerName,
+      }),
+      signal: judgeLoadController.signal,
+    });
+    const d = await r.json();
+    if (requestId !== judgeLoadRequestId) return;
+    const models = d.ok ? d.models || [] : [];
+    judgeModelMetadata = new Map();
+    for (const item of models) {
+      const entry = typeof item === "string"
+        ? { name: item, max_tokens: null, context_length: null }
+        : { name: item.name, max_tokens: item.max_tokens ?? null, context_length: item.context_length ?? null };
+      const value = String(entry.name || "").trim();
+      if (!value || judgeModelMetadata.has(value)) continue;
+      judgeModelMetadata.set(value, { max_tokens: entry.max_tokens, context_length: entry.context_length });
+    }
+    $("judge_model").placeholder = judgeModelMetadata.size
+      ? "Type at least 3 characters to filter…"
+      : "No models available";
+  } catch (e) {
+    if (requestId !== judgeLoadRequestId || e.name === "AbortError") return;
+    judgeModelMetadata = new Map();
+    $("judge_model").placeholder = "No models available";
+  }
 }
 
 function updateProviderStatusIdle() {
@@ -391,8 +479,8 @@ function setModelOptions(models, current) {
   input.dataset.maxTokens = String(modelMetadata.get(preferred)?.max_tokens || "");  modelCombo.updateClear();  updateModelLimitHint();
 }
 
-function getFilteredModels(query) {
-  const all = Array.from(modelMetadata.keys()).sort((a, b) =>
+function getFilteredModels(query, metadata = modelMetadata) {
+  const all = Array.from(metadata.keys()).sort((a, b) =>
     a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }));
   if (!query || query.length < 3) return all;
   const q = query.toLowerCase();
@@ -402,8 +490,9 @@ function getFilteredModels(query) {
 // Searchable model combo box. Both the model-under-test and the judge inputs
 // share this behaviour; they differ only in the DOM ids and the side effect
 // run after a pick (`onSelect`). Each instance keeps its own active-row index.
-function createCombo({ inputId, dropdownId, clearId, onSelect }) {
+function createCombo({ inputId, dropdownId, clearId, onSelect, getMetadata }) {
   let activeIndex = -1;
+  const metadata = getMetadata || (() => modelMetadata);
 
   const options = () => {
     const dropdown = $(dropdownId);
@@ -413,7 +502,7 @@ function createCombo({ inputId, dropdownId, clearId, onSelect }) {
   function open() {
     const dropdown = $(dropdownId);
     if (!dropdown) return;
-    const filtered = getFilteredModels($(inputId).value.trim());
+    const filtered = getFilteredModels($(inputId).value.trim(), metadata());
     activeIndex = -1;
 
     if (!filtered.length) {
@@ -424,7 +513,7 @@ function createCombo({ inputId, dropdownId, clearId, onSelect }) {
 
     dropdown.innerHTML = filtered
       .map((name, i) => {
-        const meta = modelMetadata.get(name) || {};
+        const meta = metadata().get(name) || {};
         const maxTokens = meta.max_tokens == null ? "" : String(meta.max_tokens);
         return `<div class="combo-option" data-value="${escapeHtml(name)}" data-max-tokens="${escapeHtml(maxTokens)}" data-index="${i}">${escapeHtml(name)}</div>`;
       })
@@ -497,7 +586,7 @@ const modelCombo = createCombo({
 });
 const judgeCombo = createCombo({
   inputId: "judge_model", dropdownId: "judge-dropdown", clearId: "judge-clear",
-  onSelect: updateModelLimitHint,
+  onSelect: updateModelLimitHint, getMetadata: judgeMetadataMap,
 });
 
 function wireCombo(combo, inputId, clearId) {
@@ -537,8 +626,9 @@ function updateJudgeTokenHint(model, modelMeta) {
   if (!judgeHint) return;
 
   const judgeModel = $("judge_model").value.trim();
+  const judgeProvider = $("judge_provider").value;
   const effectiveJudgeModel = judgeModel || model;
-  const judgeMeta = modelMetadata.get(effectiveJudgeModel) || null;
+  const judgeMeta = judgeMetadataMap().get(effectiveJudgeModel) || null;
 
   if (isModelLoading) {
     judgeHint.textContent = "Judge token budget will appear when provider models finish loading.";
@@ -552,6 +642,14 @@ function updateJudgeTokenHint(model, modelMeta) {
 
   if (!judgeModel) {
     judgeHint.textContent = `Judge uses the selected model. ${formatTokenBudget(modelMeta, "Token budget is unavailable for the selected model.")}`;
+    return;
+  }
+
+  if (judgeProvider) {
+    judgeHint.textContent = `Judge runs on ${judgeProvider}. ` + formatTokenBudget(
+      judgeMeta,
+      "Judge token budget is unavailable for that model in the judge provider list."
+    );
     return;
   }
 
@@ -605,6 +703,8 @@ function config() {
   if ($("cond_virtus").checked) conditions.push("virtus");
   const modelMax = parseInt($("model").dataset.maxTokens || "", 10);
   const maxTokens = Math.max(0, (modelMax || 0) - RESERVED_TOKENS);
+  const judgeProviderName = $("judge_provider").value.trim();
+  const judgeProvider = providerConfigs.get(judgeProviderName) || null;
   return {
     model: $("model").value.trim(),
     base_url: $("base_url").value.trim(),
@@ -613,6 +713,11 @@ function config() {
     // api_key captured in the form, which may already have expired.
     provider: $("provider").value.trim(),
     judge_model: $("judge_model").value.trim(),
+    // Judge on its own provider: send name + endpoint + key so the server can
+    // route judge calls there. Empty means "same provider as the test".
+    judge_provider: judgeProviderName,
+    judge_base_url: judgeProvider ? (judgeProvider.base_url || "").trim() : "",
+    judge_api_key: judgeProvider ? (judgeProvider.api_key || "").trim() : "",
     n_runs: parseInt($("n_runs").value, 10),
     temperature: parseFloat($("temperature").value),
     max_tokens: maxTokens,

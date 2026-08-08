@@ -211,7 +211,7 @@ body::-webkit-scrollbar-thumb:hover,
 .field { margin-bottom: 1px; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; }
 .field-row-judge,
-.field-row:has(#judge-combo) { grid-template-columns: minmax(0, 20%) minmax(0, 80%); }
+.field-row:has(#judge-combo) { grid-template-columns: minmax(0, 35%) minmax(0, 65%); }
 .field-row-judge .field:nth-of-type(2),
 .field-row:has(#judge-combo) .field:has(#judge-combo) { grid-column: auto; }
 .field-row-judge .hint,

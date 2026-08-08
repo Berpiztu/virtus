@@ -38,6 +38,18 @@ def _live_api_key(config: dict) -> str:
     """
     return oauth.resolve_provider_token(config.get("provider", "")) or config.get("api_key", "ollama")
 
+
+def _live_judge_api_key(config: dict) -> str:
+    """Like ``_live_api_key`` but for the judge's own provider.
+
+    Falls back to the test-model credentials when no judge provider was picked,
+    which keeps the historical single-provider behaviour.
+    """
+    token = oauth.resolve_provider_token(config.get("judge_provider", ""))
+    if token:
+        return token
+    return config.get("judge_api_key") or _live_api_key(config)
+
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "results")
 
 
@@ -80,6 +92,7 @@ def _public_config(config: dict | None) -> dict | None:
         return None
     safe = dict(config)
     safe.pop("api_key", None)
+    safe.pop("judge_api_key", None)
     return safe
 
 
@@ -164,14 +177,15 @@ def _retry_model_call(fn):
 
 
 def _classify_with_retries(response: str, config: dict) -> dict:
+    judge_base_url = config.get("judge_base_url") or config["base_url"]
     for attempt in range(TECHNICAL_ERROR_RETRIES + 1):
         if model_client.is_cancelled():
             raise model_client._CancelledError()
         verdict = classifier.classify(
             response,
-            base_url=config["base_url"],
+            base_url=judge_base_url,
             model=config.get("judge_model") or config["model"],
-            api_key=_live_api_key(config),
+            api_key=_live_judge_api_key(config),
             scenario_id=config.get("scenario_id"),
             # The judge only emits a short JSON verdict, so cap its output
             # tightly — except where hidden reasoning is billed against that
@@ -180,7 +194,7 @@ def _classify_with_retries(response: str, config: dict) -> dict:
                 config.get("judge_max_tokens", config.get("max_tokens", 1024)),
                 cap=(
                     None
-                    if model_client.reasoning_shares_output_budget(config["base_url"])
+                    if model_client.reasoning_shares_output_budget(judge_base_url)
                     else 4096
                 ),
             ),

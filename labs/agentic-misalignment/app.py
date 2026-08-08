@@ -54,6 +54,16 @@ def resolve_api_key(cfg: dict) -> str:
     return api_key or model_client.DEFAULT_API_KEY
 
 
+def resolve_judge_api_key(cfg: dict, fallback: str) -> str:
+    # Same resolution order as resolve_api_key but for the judge's own provider;
+    # with no judge provider selected the judge shares the test credentials.
+    token = oauth.resolve_provider_token(cfg.get("judge_provider", ""))
+    if token:
+        return token
+    api_key = (cfg.get("judge_api_key") or "").strip()
+    return api_key or fallback
+
+
 def resolve_temperature(cfg: dict) -> float:
     try:
         return float(cfg.get("temperature", 1.0))
@@ -200,13 +210,23 @@ def api_run():
         # tokens per trial from it, since a long run outlives a 6h access token.
         "provider": (cfg.get("provider") or "").strip(),
         "api_key": resolve_api_key(cfg),
+        # The judge may run on its own provider. Empty judge_provider/base_url
+        # means the judge stays on the test provider, as before.
+        "judge_provider": (cfg.get("judge_provider") or "").strip(),
+        "judge_base_url": (cfg.get("judge_base_url") or "").strip() or None,
         "temperature": resolve_temperature(cfg),
         "max_tokens": resolve_max_tokens(cfg),
-        "judge_max_tokens": resolve_model_max_tokens(
-            cfg,
-            cfg.get("judge_model") or cfg.get("model", model_client.DEFAULT_MODEL),
-        ),
     }
+    config["judge_api_key"] = resolve_judge_api_key(cfg, config["api_key"])
+    judge_base_url = config["judge_base_url"] or config["base_url"]
+    config["judge_max_tokens"] = resolve_model_max_tokens(
+        {
+            "base_url": judge_base_url,
+            "provider": config["judge_provider"] or config["provider"],
+            "api_key": config["judge_api_key"],
+        },
+        cfg.get("judge_model") or cfg.get("model", model_client.DEFAULT_MODEL),
+    )
 
     error = validate_provider_config(
         config["base_url"],
@@ -218,11 +238,11 @@ def api_run():
     if error:
         return jsonify({"error": error}), 400
 
-    if config["judge_model"]:
+    if config["judge_model"] or config["judge_base_url"]:
         error = validate_provider_config(
-            config["base_url"],
-            config["judge_model"],
-            config["api_key"],
+            judge_base_url,
+            config["judge_model"] or config["model"],
+            config["judge_api_key"],
             "Judge model",
             config["temperature"],
         )
