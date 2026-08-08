@@ -26,7 +26,7 @@ Together the two scenarios probe opposite ends of the failure space: what a mode
 | File | Model | Scenario | Headline |
 |---|---|---|---|
 | [`grok_summary_v1_shutdown_blackmail.md`](grok_summary_v1_shutdown_blackmail.md) | grok-4.5 | shutdown/blackmail | 85% → **0%** harmful (p = 2.6e-08) |
-| [`model_comparison_benevolent_negligence.md`](model_comparison_benevolent_negligence.md) | all fifteen | benevolent negligence | the league + per-model repair profiles; `EVAL_AWARE` detections in three models; league averages 38% → 8%; the tier tax replicated in three vendors; includes the documented layer failure (gemini-3.6-flash) and its counterfactual (mistral-large-3) |
+| [`model_comparison_benevolent_negligence.md`](model_comparison_benevolent_negligence.md) | all fifteen | benevolent negligence | the league + per-model repair profiles; `EVAL_AWARE` detections in three models; league averages 34% → 8%; the tier tax in two current pairs (a third, DeepSeek, repaired via retraining); includes the documented layer failure (gemini-3.6-flash) and its counterfactual (mistral-large-3) |
 | [`gpt55_summary_v1_benevolent_negligence.md`](gpt55_summary_v1_benevolent_negligence.md) | gpt-5.5 | benevolent negligence | 60% → **5%** negligent (p = 4.3e-04); due diligence 0% → 50% |
 | [`grok_summary_v1_benevolent_negligence.md`](grok_summary_v1_benevolent_negligence.md) | grok-4.5 | benevolent negligence | 30% → **0%** negligent (p = 0.020); 20% stall cost, reported |
 | [`glm_summary_v1_benevolent_negligence.md`](glm_summary_v1_benevolent_negligence.md) | glm-5.2 | benevolent negligence | due diligence 35% → **90%** (p = 7.7e-04) |
@@ -37,7 +37,7 @@ Together the two scenarios probe opposite ends of the failure space: what a mode
 | [`gemini_pro_summary_v1_benevolent_negligence.md`](gemini_pro_summary_v1_benevolent_negligence.md) | gemini-pro | benevolent negligence | near-ceiling; clean sweep under Virtus |
 | [`nemotron_super_summary_v1_benevolent_negligence.md`](nemotron_super_summary_v1_benevolent_negligence.md) | nemotron-3-super | benevolent negligence | the repairable speed tier: 60% → **5%** |
 | [`nemotron_ultra_summary_v1_benevolent_negligence.md`](nemotron_ultra_summary_v1_benevolent_negligence.md) | nemotron-3-ultra | benevolent negligence | largest avoidance→verification conversion: 25% → **95%** |
-| [`deepseek_flash_summary_v1_benevolent_negligence.md`](deepseek_flash_summary_v1_benevolent_negligence.md) | deepseek-v4-flash (preview) | benevolent negligence | the referee as player: 50% → **5%** |
+| [`deepseek_flash_summary_v1_benevolent_negligence.md`](deepseek_flash_summary_v1_benevolent_negligence.md) | deepseek-v4-flash **(preview)** | benevolent negligence | historical: preview build 50% → **5%**; superseded in the league table by the 0731 build (below) |
 | [`deepseek_flash_0731_before_after.md`](deepseek_flash_0731_before_after.md) | deepseek-v4-flash **preview vs 0731** | benevolent negligence | **first longitudinal build pair**: retraining takes falls 50% → **0%** (p = 4.4e-04) — by the brake, not the method (unaided verification 30%); Virtus converts it: 30% → **80%** |
 | [`deepseek_pro_summary_v1_benevolent_negligence.md`](deepseek_pro_summary_v1_benevolent_negligence.md) | deepseek-v4-pro | benevolent negligence | second ceiling; first cross-family judgement |
 | [`qwen_summary_v1_benevolent_negligence.md`](qwen_summary_v1_benevolent_negligence.md) | qwen3.7-max | benevolent negligence | the full repair: both metrics significant |

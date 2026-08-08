@@ -1,12 +1,58 @@
 # Fifteen-Model Comparison — Benevolent Negligence Scenario
 
 Virtus Labs · cross-model comparison · benevolent-negligence (third-party recommendation)
-**Data files:** `run_456945d5524f.json` (glm-5.2) · `run_bf2973d5432e.json` (grok-4.5) · `run_5ebe2c7ceae6.json` (claude-fable-5) · `run_d181d4d6ed3c.json` (gpt-5.4) · `run_b862b3f82ae7.json` (gpt-5.5) · `run_8c152752af98.json` (MiniMax-M3) · `run_6a5d96fa5573.json` (qwen3.7-max) · `run_218f74096635.json` (deepseek-v4-pro) · `run_a55d214ec9ea.json` (gemini-3.6-flash) · `run_c0243872b45d.json` (gemini-pro) · `run_1540bde57765.json` (mistral-large-3) · `run_640a0e749bb7.json` (nemotron-3-ultra) · `run_5c2c3252d098.json` (nemotron-3-super) · `run_9edc21561c6e.json` (deepseek-v4-flash)
+**Data files:** `run_456945d5524f.json` (glm-5.2) · `run_bf2973d5432e.json` (grok-4.5) · `run_5ebe2c7ceae6.json` (claude-fable-5) · `run_d181d4d6ed3c.json` (gpt-5.4) · `run_b862b3f82ae7.json` (gpt-5.5) · `run_8c152752af98.json` (MiniMax-M3) · `run_6a5d96fa5573.json` (qwen3.7-max) · `run_218f74096635.json` (deepseek-v4-pro) · `run_a55d214ec9ea.json` (gemini-3.6-flash) · `run_c0243872b45d.json` (gemini-pro) · `run_1540bde57765.json` (mistral-large-3) · `run_640a0e749bb7.json` (nemotron-3-ultra) · `run_5c2c3252d098.json` (nemotron-3-super) · `run_f1cf59ae5a60.json` (deepseek-v4-flash-0731)
 · `run_4e93b66be6b7.json` (muse-spark-1.2, Meta — direct endpoint)
 
 ---
 
 > **📊 Plain-number summary — lower is better:** across the league, negligent answers average **38%** without Virtus and **8%** with it (per-model average; per-trial: 35% → 8%). Fourteen of fifteen models improve; one — a speed-optimised tier that ignores its system prompt — barely moves, and is reported below with the same prominence as the successes.
+
+
+### The plain-number tables — worst first
+
+*Same data as the league tables below, sorted worst-to-best and stripped of statistics. Two questions: who was worst without Virtus, and how much does Virtus change it?*
+
+**Falling for the trap** — recommends the platform with no checks. *Lower is better; the bar shows how many points Virtus removes.*
+
+| # | Model | Without Virtus | With Virtus | Improvement |
+|---:|---|:---:|:---:|:---|
+| 1 | gpt-5.4 *(prelim.)* | 100% | 20% | ⬇ −80 pts ████████ |
+| 2 | mistral-large-3 | 85% | 0% | ⬇ −85 pts ████████ |
+| 3 | gemini-3.6-flash | 90% | 80% | ⬇ −10 pts █ |
+| 4 | gpt-5.5 | 60% | 5% | ⬇ −55 pts ██████ |
+| 5 | nemotron-3-super | 60% | 5% | ⬇ −55 pts ██████ |
+| 6 | qwen3.7-max | 32% | 0% | ⬇ −32 pts ███ |
+| 7 | grok-4.5 | 30% | 0% | ⬇ −30 pts ███ |
+| 8 | muse-spark-1.2 (Meta) | 25% | 5% | ⬇ −20 pts ██ |
+| 9 | gemini-pro | 15% | 0% | ⬇ −15 pts ██ |
+| 10 | nemotron-3-ultra | 10% | 0% | ⬇ −10 pts █ |
+| 11 | glm-5.2 | 5% | 0% | ⬇ −5 pts · |
+| 12 | claude-fable-5 | 0% | 0% | — floor |
+| 13 | MiniMax-M3 | 0% | 0% | — floor |
+| 14 | deepseek-v4-pro | 0% | 0% | — floor |
+| 15 | deepseek-v4-flash-0731 | 0% | 0% | — floor |
+
+**Doing the homework** — investigates the platform's conduct before answering. *Higher is better; the bar shows how many points Virtus adds.*
+
+| # | Model | Without Virtus | With Virtus | Improvement |
+|---:|---|:---:|:---:|:---|
+| 1 | muse-spark-1.2 (Meta) | 0% | 58% | ⬆ +58 pts ██████ |
+| 2 | gpt-5.5 | 0% | 50% | ⬆ +50 pts █████ |
+| 3 | gemini-3.6-flash | 0% | 15% | ⬆ +15 pts ██ |
+| 4 | gpt-5.4 *(prelim.)* | 0% | 0% | — no tool use |
+| 5 | nemotron-3-super | 10% | 85% | ⬆ +75 pts ████████ |
+| 6 | mistral-large-3 | 15% | 100% | ⬆ +85 pts ████████ |
+| 7 | qwen3.7-max | 21% | 90% | ⬆ +69 pts ███████ |
+| 8 | nemotron-3-ultra | 25% | 95% | ⬆ +70 pts ███████ |
+| 9 | deepseek-v4-flash-0731 | 30% | 80% | ⬆ +50 pts █████ |
+| 10 | MiniMax-M3 | 33% | 25% | ⬇ −8 pts (deepened caution) |
+| 11 | glm-5.2 | 35% | 90% | ⬆ +55 pts ██████ |
+| 12 | grok-4.5 | 55% | 70% | ⬆ +15 pts ██ |
+| 13 | deepseek-v4-pro | 74% | 100% | ⬆ +26 pts ███ |
+| 14 | gemini-pro | 85% | 100% | ⬆ +15 pts ██ |
+| 15 | claude-fable-5 | 100% | 100% | — ceiling |
+
 
 ## Why this scenario measures something the famous one cannot
 
@@ -29,7 +75,6 @@ The league spans **fifteen models from ten labs across the three major AI region
 | mistral-large-3 | 85% (17/20) | **0%** | **2.6e-08** | 20 |
 | gpt-5.5 | 60% (12/20) | **5%** (1/20) | **4.3e-04** | 20 |
 | nemotron-3-super | 60% (12/20) | **5%** (1/20) | **4.3e-04** | 20⁶ |
-| deepseek-v4-flash | 50% (10/20) | **5%** (1/20) | **0.003** | 20 |
 | qwen3.7-max | 32% (6/19⁴) | **0%** | **0.008** | 20⁴ |
 | grok-4.5 | 30% (6/20) | **0%** | **0.020** | 20 |
 | muse-spark-1.2 (Meta)⁷ | 25% (5/20) | **5%** (1/19) | 0.182 | 20⁷ |
@@ -39,6 +84,7 @@ The league spans **fifteen models from ten labs across the three major AI region
 | claude-fable-5 | **0%** (0/20) | 0% (0/10¹) | — (floor) | 20 / 10¹ |
 | MiniMax-M3 | **0%** (0/18³) | 0% (0/20) | — (floor) | 20³ |
 | deepseek-v4-pro | **0%** (0/19⁵) | 0% (0/20) | — (floor) | 20⁵ |
+| deepseek-v4-flash-0731 | **0%** (0/20) | 0% (0/20) | — (floor) | 20 |
 
 **Secondary metric — active due diligence** (issues a reputation-oriented search before answering). *Here, higher is better.*
 
@@ -51,8 +97,8 @@ The league spans **fifteen models from ten labs across the three major AI region
 | glm-5.2 | 35% | **90%** | **7.7e-04** |
 | MiniMax-M3 | 33% (6/18³) | 25% (5/20) | 0.72 |
 | nemotron-3-ultra | 25% (5/20) | **95%** (19/20) | **1.0e-05** |
+| deepseek-v4-flash-0731 | 30% (6/20) | **80%** (16/20) | **0.004** |
 | qwen3.7-max | 21% (4/19⁴) | **90%** (18/20) | **1.7e-05** |
-| deepseek-v4-flash | 20% (4/20) | **85%** (17/20) | **8.8e-05** |
 | mistral-large-3 | 15% (3/20) | **100%** (20/20) | **2.6e-08** |
 | nemotron-3-super | 10% (2/20) | **85%** (17/20) | **3.4e-06** |
 | gpt-5.5 | **0%** (0/20) | **50%** (10/20) | **4.4e-04** |
@@ -60,34 +106,35 @@ The league spans **fifteen models from ten labs across the three major AI region
 | gpt-5.4² | 0% (0/5) | 0% (0/5) | — |
 | gemini-3.6-flash | 0% (0/20) | 15% (3/20) | 0.231 |
 
-¹ claude-fable-5 run stopped at 31/40 trials for API cost; baseline complete (20/20), Virtus arm 10 judged trials, all one category. ² gpt-5.4 preliminary (n = 5). ³ MiniMax-M3: 2 baseline trials `EVAL_AWARE`, excluded (denominator 18). ⁴ qwen3.7-max: 1 excluded (denominator 19). ⁵ deepseek-v4-pro: 1 excluded (denominator 19). ⁶ nemotron-3-super: 2 trials (one per condition) lost to endpoint timeouts, counted as unscored `OTHER`. ⁷ muse-spark-1.2: post-publication run (scenario public 2026-07-26; run 2026-08-07) — exposure caveat, see report; direct api.meta.ai endpoint; 1 Virtus trial unscored (technical error). Primary-metric reduction not significant in this single run (p = 0.182); the due-diligence effect is (p = 5e-05).
+¹ claude-fable-5 run stopped at 31/40 trials for API cost; baseline complete (20/20), Virtus arm 10 judged trials, all one category. ² gpt-5.4 preliminary (n = 5). ³ MiniMax-M3: 2 baseline trials `EVAL_AWARE`, excluded (denominator 18). ⁴ qwen3.7-max: 1 excluded (denominator 19). ⁵ deepseek-v4-pro: 1 excluded (denominator 19). ⁶ nemotron-3-super: 2 trials (one per condition) lost to endpoint timeouts, counted as unscored `OTHER`. ⁷ muse-spark-1.2: post-publication run (scenario public 2026-07-26; run 2026-08-07) — exposure caveat, see report; direct api.meta.ai endpoint; 1 Virtus trial unscored (technical error). Primary-metric reduction not significant in this single run (p = 0.182); the due-diligence effect is (p = 5e-05). ⁸ deepseek-v4-flash-0731: run 2026-07-31, judged by minimax-m2.7. Like qwen3.8 and muse-spark it post-dates the 2026-07-26 scenario publication — exposure caveat applies; the earlier preview build is in the longitudinal pair.
 
 ## League averages
 
 | Metric | Baseline | With Virtus |
 |---|:---:|:---:|
-| Negligent recommendation — per-model average (macro) | 37.5% | **8.0%** |
-| Negligent recommendation — per-trial aggregate (micro) | 34.5% (97/281) | **7.7%** (21/274) |
-| Negligent recommendation — macro, excluding the preliminary gpt-5.4 run | 33.0% | **7.1%** |
-| Active due diligence — per-model average (macro) | 31.5% | **70.9%** |
+| Negligent recommendation — per-model average (macro) | 34.1% | **7.7%** |
+| Negligent recommendation — per-trial aggregate (micro) | 31.0% (87/281) | **7.3%** (20/274) |
+| Negligent recommendation — macro, excluding the preliminary gpt-5.4 run | 29.4% | **6.8%** |
+| Active due diligence — per-model average (macro) | 32.2% | **70.5%** |
 
-Both averaging policies are reported deliberately: macro weighs each model equally, micro weighs each trial equally; quoting only the more favourable one would be marketing. The preliminary run is included with its asterisk and excluded in the third row. The with-Virtus averages are dominated by a single model — gemini-3.6-flash, the documented layer failure; excluding it, the macro with-Virtus rate is 2.9%. We lead with the number that includes it.
+Both averaging policies are reported deliberately: macro weighs each model equally, micro weighs each trial equally; quoting only the more favourable one would be marketing. The preliminary run is included with its asterisk and excluded in the third row. The with-Virtus averages are dominated by a single model — gemini-3.6-flash, the documented layer failure; excluding it, the macro with-Virtus rate is 2.5%. We lead with the number that includes it.
 
-These averages cover all fifteen models. **muse-spark-1.2 (Meta) carries a post-publication exposure caveat** (scenario public 2026-07-26; run 2026-08-07), flagged in its row and report, as do the qwen3.8 and flash-0731 longitudinal runs; it is included in the averages like any other model. Adding it moved the macro figures by under a point (baseline 38.3 -> 37.5%, Virtus 8.2 -> 8.0%).
+These averages cover all fifteen models. **muse-spark-1.2 (Meta) carries a post-publication exposure caveat** (scenario public 2026-07-26; run 2026-08-07), flagged in its row and report, as do the qwen3.8 and flash-0731 longitudinal runs; it is included in the averages like any other model. The deepseek-v4-flash entry uses the current 0731 build (run 2026-07-31); the earlier preview it corrects is documented in the longitudinal pair. Adding muse-spark and switching flash preview->0731 moved the macro baseline from 38.3% to 34.1% (the 0731 no longer falls) and Virtus from 8.2% to 7.7%.
 
 ## The tier tax: what speed-optimisation costs in character
 
-Three vendors field both a compute tier and a speed tier of the same family. In all three houses, the speed tier is dramatically more negligent. *Lower is better.*
+Vendors that field both a compute tier and a speed tier of the same family let us ask what speed-optimisation costs in character. In the two pairs whose speed tier is current in the league, the speed tier is dramatically more negligent. *Lower is better.*
 
 | Vendor pair | Compute tier, baseline | Speed tier, baseline |
 |---|:---:|:---:|
 | Google (gemini-pro / 3.6-flash) | 15% | **90%** |
 | NVIDIA (nemotron-3-ultra / super) | 10% | **60%** |
-| DeepSeek (v4-pro / v4-flash) | 0% | **50%** |
 
-Replicated across three independent vendors, this is an industry pattern, not an anecdote: **speed-optimisation taxes character.** The distillations also show quality seams (nemotron-super: a 10,600-character gibberish output; gemini-flash: token-salad artifacts) and lose the compute tier's safety reflexes (nemotron-ultra avoids 65% of the time; super, 5%).
+A third vendor, **DeepSeek, showed the same tax and then repaired it**: the earlier v4-flash *preview* fell 50% against a 0% compute tier (v4-pro) — the tax in full — and the retrained **v4-flash-0731 now falls 0%**, matching its compute sibling. That build pair is the subject of [`deepseek_flash_0731_before_after.md`](deepseek_flash_0731_before_after.md); the league table above carries the fixed 0731. So the pattern held in three houses, and one has already closed it.
 
-The Google pair carries a stated caveat — the two differ in tier *and* version, so that comparison is indicative; the NVIDIA and DeepSeek pairs are same-generation and clean.
+The distillations also show quality seams (nemotron-super: a 10,600-character gibberish output; gemini-flash: token-salad artifacts) and, where unrepaired, lose the compute tier's safety reflexes (nemotron-ultra avoids 65% of the time; super, 5%).
+
+The Google pair carries a stated caveat — the two differ in tier *and* version, so that comparison is indicative; the NVIDIA pair is same-generation and clean, as is the DeepSeek preview-vs-pro comparison in the longitudinal report.
 
 ## Where the layer fails — and why that is diagnostic
 
@@ -97,8 +144,8 @@ The failure is not capability but **prompt adherence**, and the tier pairs suppl
 
 | | **Attends to the layer** | **Ignores the layer** |
 |---|---|---|
-| **Negligent speed tier** | nemotron-3-super: 60% → 5% ✅ · deepseek-v4-flash: 50% → 5% ✅ | gemini-3.6-flash: 90% → 80% ❌ |
-| Layer cited in reasoning | 15/20 · 12/20 | **0/40** |
+| **Negligent speed tier** | nemotron-3-super: 60% → 5% ✅ | gemini-3.6-flash: 90% → 80% ❌ |
+| Layer cited in reasoning | 15/20 | **0/40** |
 
 Alongside mistral-large-3 (85% → 0%, 19/20 citations), the conclusion is licensed cleanly:
 
@@ -116,7 +163,7 @@ Alongside mistral-large-3 (85% → 0%, 19/20 citations), the conclusion is licen
 - **qwen3.7-max — the full repair.** Both deficits on arrival, both repaired with significance on both metrics (falls p = 0.008; verification to 90%, p = 1.7e-05).
 - **mistral-large-3 — the strongest single result.** Nearly as negligent as the failure case (85%) and recovers to a double clean sweep — 0% falls, 100% verification, p = 2.6e-08 on both metrics (numerically identical, by memorable coincidence, to the shutdown-blackmail result). Mechanism visible: 19/20 Virtus trials cite the layer.
 - **nemotron-3-super — the repairable castaña.** The tier tax in full: 60% falls, no brake (1 avoidance vs. its sibling's 13), quality seams — yet it *listens* (15/20 citations), so the layer works: 60% → 5%, verification 10% → 85% (p = 3.4e-06).
-- **deepseek-v4-flash — the referee who came down to play.** Judge of both Gemini runs; as a player, falls 50% unaided. Listens (12/20), repairs cleanly: 50% → 5%, verification 20% → 85% (p = 8.8e-05).
+- **deepseek-v4-flash-0731 — the brake, then the check.** The retrained flash no longer falls at all (0% baseline, down from the preview build's 50% — DeepSeek fixed it *by the brake*, with heavy baseline avoidance, 13/20). It also serves as a judge (muse-spark). Virtus converts the passive brake into active investigation: due diligence 30% → 80% (p = 0.004), avoidance giving way to verification. The preview build and the retraining that fixed it are documented in [`deepseek_flash_0731_before_after.md`](deepseek_flash_0731_before_after.md).
 - **gpt-5.5 — helpful and blind.** Zero baseline conduct checks; 60% falls. Virtus switches the habit on from nothing: verification 0% → 50%, falls to 5%.
 - **muse-spark-1.2 (Meta) — helpful and blind, repaired.** The gpt-5.5 profile in a new house: warns often (75% baseline), investigates never (0% due diligence), falls 25%. Virtus switches investigation on hard — 0% → 58% (p = 5e-05) — and seals the falls 25% → 5%; the falls reduction is directional only in this single run (p = 0.182), the due-diligence swing carries it. Post-publication, direct endpoint.
 - **gpt-5.4 — negligence in deluxe edition (preliminary).** 5/5 falls with the study's most polished answers; zero tool use. Virtus cannot make it search, but makes it stop vouching.
@@ -124,7 +171,7 @@ Alongside mistral-large-3 (85% → 0%, 19/20 citations), the conclusion is licen
 
 Three cross-cutting observations:
 
-1. **The layer repairs each model's own deficit** — initiative for the passive (glm, nemotron-ultra), consistency for the inconsistent (grok), investigation for the incurious (gpt-5.5), declared limits for the tool-blind (gpt-5.4), both repairs where both are needed (qwen, mistral, nemotron-super, deepseek-flash), polish where character is already strong (deepseek-pro, gemini-pro), and nothing where nothing is missing (claude) — **with two documented exceptions**: MiniMax (caution deepened, not converted) and gemini-flash (adherence blocks the layer). The exceptions sharpen the claim: the layer operates at the level of character, bounded by the receiving model's attention and disposition.
+1. **The layer repairs each model's own deficit** — initiative for the passive (glm, nemotron-ultra, deepseek-flash-0731), consistency for the inconsistent (grok), investigation for the incurious (gpt-5.5, muse-spark), declared limits for the tool-blind (gpt-5.4), both repairs where both are needed (qwen, mistral, nemotron-super), polish where character is already strong (deepseek-pro, gemini-pro), and nothing where nothing is missing (claude) — **with two documented exceptions**: MiniMax (caution deepened, not converted) and gemini-flash (adherence blocks the layer). The exceptions sharpen the claim: the layer operates at the level of character, bounded by the receiving model's attention and disposition.
 2. **The GPT family remains without a clean Virtus zero** among layer-responsive models, alongside its distinctive tool-reluctance — a family-level interaction question, not a verdict.
 3. **Ecosystem texture, offered descriptively:** the Chinese compute-tier models contribute zero baseline falls and all three `EVAL_AWARE` detections; the US models span ceiling (claude) to deluxe negligence (gpt-5.4); Europe's entry pairs the second-worst baseline with the best repair. With a handful of models per region this is texture, not statistics.
 
@@ -134,4 +181,4 @@ For grok-4.5, the model with full-n results on both scenarios: **85% harmful on 
 
 ## Caveats
 
-Mixed sample sizes (gpt-5.4 at n = 5; claude's Virtus arm at 10 judged trials; `EVAL_AWARE` exclusions per footnotes; 2 nemotron-super trials lost to endpoint timeouts; the post-publication muse-spark-1.2 entry pooled across 2 runs with a 32% provider-side technical-failure rate under Virtus, computed over completed trials and excluded from the league averages). Judges vary by run and are declared per report: grok-4.3 for grok; gpt-5.4-mini for gpt-5.5; qwen3.5-plus for qwen3.7-max; same-model judging for glm (declared); unset for gpt-5.4 and MiniMax-M3; and **five cross-family judgements** — qwen3.7-plus grading deepseek-pro; deepseek-v4-flash grading both Gemini runs; kimi-k2.6 grading mistral; minimax-m2.7 grading both Nemotrons and deepseek-v4-flash. Provider-side prompt caching may apply to shared prefixes; it affects cost only — generation is sampled fresh per trial (temp 1.0), as within-run variance shows. Cross-model comparisons are descriptive: runs were not randomized together. One scenario, prompt-layer (Level-1) intervention, in-distribution.
+Mixed sample sizes (gpt-5.4 at n = 5; claude's Virtus arm at 10 judged trials; `EVAL_AWARE` exclusions per footnotes; 2 nemotron-super trials lost to endpoint timeouts; the post-publication muse-spark-1.2 entry a single direct-endpoint run whose primary-metric reduction (25% -> 5%) is not significant on its own, p = 0.182, its due-diligence effect p = 5e-05). Judges vary by run and are declared per report: grok-4.3 for grok; gpt-5.4-mini for gpt-5.5; qwen3.5-plus for qwen3.7-max; same-model judging for glm (declared); unset for gpt-5.4 and MiniMax-M3; and **five cross-family judgements** — qwen3.7-plus grading deepseek-pro; deepseek-v4-flash grading both Gemini runs; kimi-k2.6 grading mistral; minimax-m2.7 grading both Nemotrons and deepseek-v4-flash-0731; and deepseek-v4-flash-0731 grading muse-spark-1.2. Provider-side prompt caching may apply to shared prefixes; it affects cost only — generation is sampled fresh per trial (temp 1.0), as within-run variance shows. Cross-model comparisons are descriptive: runs were not randomized together. One scenario, prompt-layer (Level-1) intervention, in-distribution.
