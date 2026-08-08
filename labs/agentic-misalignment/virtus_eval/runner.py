@@ -17,6 +17,7 @@ Only one experiment runs at a time (single ExperimentManager instance).
 
 import json
 import os
+import random
 import re
 import threading
 import time
@@ -57,8 +58,21 @@ RESERVED_TOKENS = 800
 
 ANTHROPIC_TRIAL_DELAY_SECONDS = float(os.getenv("ANTHROPIC_TRIAL_DELAY_SECONDS", "0.8"))
 ANTHROPIC_429_COOLDOWN_SECONDS = float(os.getenv("ANTHROPIC_429_COOLDOWN_SECONDS", "10"))
-TECHNICAL_ERROR_RETRIES = int(os.getenv("TECHNICAL_ERROR_RETRIES", "2"))
+
+# Default raised from 2 → 5. Some model servings (observed on meta/muse-spark-1.2)
+# enter 502 bursts lasting tens of seconds when the Virtus prompt induces long
+# outputs. Three quick attempts never escape such a burst; more attempts *plus*
+# the exponential backoff below let some retry land outside the bad window,
+# recovering trials that would otherwise be dropped as TECHNICAL_ERROR. Because
+# those dropped trials correlate with response length (and length with response
+# quality), recovering them is a correctness fix, not just a speed one.
+TECHNICAL_ERROR_RETRIES = int(os.getenv("TECHNICAL_ERROR_RETRIES", "5"))
+
+# Base delay for exponential backoff: wait ≈ base * 2**attempt + jitter, capped at
+# TECHNICAL_ERROR_RETRY_MAX_SECONDS. A *fixed* delay assumes provider errors are
+# independent between consecutive retries — during an outage burst they are not.
 TECHNICAL_ERROR_RETRY_DELAY_SECONDS = float(os.getenv("TECHNICAL_ERROR_RETRY_DELAY_SECONDS", "1.0"))
+TECHNICAL_ERROR_RETRY_MAX_SECONDS = float(os.getenv("TECHNICAL_ERROR_RETRY_MAX_SECONDS", "30"))
 
 
 def _public_config(config: dict | None) -> dict | None:
@@ -69,13 +83,18 @@ def _public_config(config: dict | None) -> dict | None:
     return safe
 
 
-def _capped_output_tokens(raw_limit: int | None, *, cap: int) -> int:
-    """Clamp requested output so prompt overhead does not overflow the context."""
+def _capped_output_tokens(raw_limit: int | None, *, cap: int | None) -> int:
+    """Clamp requested output so prompt overhead does not overflow the context.
+
+    ``cap=None`` keeps the configured budget as-is (minus the reserve), for
+    providers that need every token they were given.
+    """
     try:
         limit = int(raw_limit or 0)
     except (TypeError, ValueError):
         limit = 0
-    return min(max(0, limit - RESERVED_TOKENS), cap)
+    budget = max(0, limit - RESERVED_TOKENS)
+    return budget if cap is None else min(budget, cap)
 
 
 def _is_technical_error_message(message: str) -> bool:
@@ -107,6 +126,19 @@ def _has_actionable_response_content(response_details: dict) -> bool:
     return bool(visible)
 
 
+def _retry_backoff_sleep(attempt: int) -> None:
+    """Sleep with exponential backoff + jitter before the next retry.
+
+    ``attempt`` is the zero-based index of the attempt that just failed, so the
+    waits grow ~1, 2, 4, 8, 16 s (capped at TECHNICAL_ERROR_RETRY_MAX_SECONDS).
+    The 0–1 s random jitter desynchronises retries so they don't all replay
+    against the same provider outage window.
+    """
+    base = max(0.0, TECHNICAL_ERROR_RETRY_DELAY_SECONDS)
+    delay = min(base * (2 ** attempt), TECHNICAL_ERROR_RETRY_MAX_SECONDS)
+    time.sleep(delay + random.uniform(0.0, 1.0))
+
+
 def _retry_model_call(fn):
     last_error = None
     for attempt in range(TECHNICAL_ERROR_RETRIES + 1):
@@ -116,14 +148,18 @@ def _retry_model_call(fn):
             response = fn()
             if _has_actionable_response_content(response):
                 return response
+            # Empty / whitespace-only content (the muse-spark stall signature):
+            # treat it like a transient technical error and back off before the
+            # next attempt instead of hammering the provider immediately.
             last_error = model_client.ModelError("Model returned no actionable content")
             if attempt >= TECHNICAL_ERROR_RETRIES:
                 raise last_error
+            _retry_backoff_sleep(attempt)
         except model_client.ModelError as exc:
             last_error = exc
             if attempt >= TECHNICAL_ERROR_RETRIES or not _is_technical_error_message(str(exc)):
                 raise
-            time.sleep(max(0.0, TECHNICAL_ERROR_RETRY_DELAY_SECONDS))
+            _retry_backoff_sleep(attempt)
     raise last_error  # pragma: no cover
 
 
@@ -137,16 +173,22 @@ def _classify_with_retries(response: str, config: dict) -> dict:
             model=config.get("judge_model") or config["model"],
             api_key=_live_api_key(config),
             scenario_id=config.get("scenario_id"),
-            # The judge only emits a short JSON verdict, so cap its output tightly.
+            # The judge only emits a short JSON verdict, so cap its output
+            # tightly — except where hidden reasoning is billed against that
+            # same budget and would starve the verdict.
             max_tokens=_capped_output_tokens(
                 config.get("judge_max_tokens", config.get("max_tokens", 1024)),
-                cap=4096,
+                cap=(
+                    None
+                    if model_client.reasoning_shares_output_budget(config["base_url"])
+                    else 4096
+                ),
             ),
         )
         if verdict.get("method") != "heuristic-fallback" or verdict.get("rationale") != "judge unreachable; used heuristic":
             return verdict
         if attempt < TECHNICAL_ERROR_RETRIES:
-            time.sleep(max(0.0, TECHNICAL_ERROR_RETRY_DELAY_SECONDS))
+            _retry_backoff_sleep(attempt)
     return {
         "category": "TECHNICAL_ERROR",
         "rationale": "Judge model unavailable after retries.",
@@ -330,9 +372,16 @@ class ExperimentManager:
                         # leaves room for reasoning models (e.g. MiniMax-M3) whose
                         # chain-of-thought plus the agent's reply and any tool
                         # blocks can run past 4096 and get truncated mid-sentence.
+                        # Providers that bill hidden reasoning against the output
+                        # budget (Meta) get the full max_tokens instead: the cap
+                        # would be consumed before any visible text is emitted.
                         test_max_tokens = _capped_output_tokens(
                             config.get("max_tokens", 1024),
-                            cap=8192,
+                            cap=(
+                                None
+                                if model_client.reasoning_shares_output_budget(config["base_url"])
+                                else 8192
+                            ),
                         )
                         response_details = _retry_model_call(
                             lambda: model_client.chat_details(

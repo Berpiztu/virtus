@@ -272,6 +272,31 @@ def _is_openai_base_url(base_url: str) -> bool:
     return host == "api.openai.com"
 
 
+def _is_meta_base_url(base_url: str) -> bool:
+    """Return True for Meta's endpoint (api.meta.ai), which speaks Responses.
+
+    Meta exposes /chat/completions too, but its reasoning models return
+    ``message.content = null`` there (the whole budget goes to hidden reasoning
+    tokens), so only /responses yields usable text.
+    """
+    try:
+        host = urlparse(base_url).netloc.lower()
+    except ValueError:
+        return False
+    return host == "api.meta.ai" or host.endswith(".meta.ai")
+
+
+def reasoning_shares_output_budget(base_url: str) -> bool:
+    """True when hidden reasoning tokens are charged against max_output_tokens.
+
+    Meta's Responses API spends most of the budget on reasoning tokens it never
+    returns (~700 for a trivial prompt, far more for a scenario prompt), so a
+    modest output cap leaves nothing for the visible reply. Callers use this to
+    hand such providers the full configured budget instead of a small cap.
+    """
+    return _is_meta_base_url(base_url)
+
+
 def _is_openai_codex_base_url(base_url: str) -> bool:
     """Return True for ChatGPT Codex backend (chatgpt.com/backend-api/codex)."""
     try:
@@ -1147,7 +1172,10 @@ def chat_details(
     url = base_url.rstrip("/") + "/chat/completions"
     is_anthropic = _is_anthropic_base_url(base_url)
     is_openai = _is_openai_base_url(base_url)
+    is_meta = _is_meta_base_url(base_url)
     is_openai_codex = _is_openai_codex_base_url(base_url)
+    # Every Responses-API provider shares the same payload/parsing path.
+    uses_responses = is_openai or is_meta or is_openai_codex
     if is_anthropic:
         url = _anthropic_api_base(base_url) + "/messages"
         payload = {
@@ -1160,12 +1188,14 @@ def chat_details(
             "max_tokens": max_tokens,
         }
         headers = _provider_headers(api_key, base_url=base_url)
-    elif is_openai or is_openai_codex:
-        # OpenAI native + ChatGPT Codex backend both use the Responses API.
-        # Codex rejects chat/completions and needs Cloudflare/account headers.
+    elif uses_responses:
+        # OpenAI native, Meta and the ChatGPT Codex backend all use the
+        # Responses API. Codex rejects chat/completions and needs
+        # Cloudflare/account headers.
         url = base_url.rstrip("/") + "/responses"
-        # api.openai.com accepts a plain string for `input`; chatgpt.com Codex
-        # requires a list of message items and store=false (Hermes contract).
+        # api.openai.com and api.meta.ai accept a plain string for `input`;
+        # chatgpt.com Codex requires a list of message items and store=false
+        # (Hermes contract).
         if is_openai_codex:
             response_input: str | list = [
                 {
@@ -1192,6 +1222,11 @@ def chat_details(
             # models spend part of the budget on reasoning before emitting the
             # answer, so never send a tiny value.
             payload["max_output_tokens"] = max(16, max_tokens)
+        if is_meta:
+            # Meta honours temperature on /responses; OpenAI's reasoning models
+            # reject it, so only send it where it is known to work. The 400
+            # fallback below drops it again if a model ever refuses.
+            payload["temperature"] = temperature
         headers = _provider_headers(api_key, base_url=base_url)
     else:
         # OpenAI-compatible proxies keep chat/completions with max_tokens; if a
@@ -1277,7 +1312,7 @@ def chat_details(
         payload_no_temp.pop("temperature", None)
         resp = _request_with_retry("POST", url, headers=headers, payload=payload_no_temp, timeout=timeout)
         dropped_temperature = True
-    elif is_openai and _openai_rejects_reasoning(resp):
+    elif (is_openai or is_meta) and _openai_rejects_reasoning(resp):
         # Non-reasoning model, or an org not verified for reasoning summaries:
         # retry once without the reasoning field so we still get the answer.
         payload_retry = dict(payload)
@@ -1285,8 +1320,7 @@ def chat_details(
         resp = _request_with_retry("POST", url, headers=headers, payload=payload_retry, timeout=timeout)
     elif (
         not is_anthropic
-        and not is_openai
-        and not is_openai_codex
+        and not uses_responses
         and "max_tokens" in payload
         and _openai_rejects_max_tokens(resp)
     ):
@@ -1332,7 +1366,7 @@ def chat_details(
                 "reasoning": reasoning,
                 "finish_reason": stop_reason,
             }
-        if is_openai:
+        if is_openai or is_meta:
             content, reasoning, text, finish_reason = _extract_openai_responses_parts(data)
             if text:
                 return {
