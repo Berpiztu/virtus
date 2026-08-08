@@ -211,13 +211,13 @@ body::-webkit-scrollbar-thumb:hover,
 .field { margin-bottom: 1px; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; }
 .field-row-judge,
-.field-row:has(#judge-combo) { grid-template-columns: minmax(0, 35%) minmax(0, 65%); }
+.field-row:has(#judge-combo) { grid-template-columns: minmax(0, 25%) minmax(0, 75%); }
 .field-row-judge .field:nth-of-type(2),
 .field-row:has(#judge-combo) .field:has(#judge-combo) { grid-column: auto; }
 .field-row-judge .hint,
 .field-row:has(#judge-combo) .hint { grid-column: 1 / -1; }
 label, .label-as-text {
-  display: block; font-size: 12px; color: var(--muted);
+  display: block; font-size: 10px; color: var(--muted);
   margin-bottom: 6px; letter-spacing: 0.03em;
 }
 input[type=text], input[type=password], input[type=number], textarea, select {
@@ -226,8 +226,8 @@ input[type=text], input[type=password], input[type=number], textarea, select {
   border: 1px solid var(--line);
   color: var(--ink);
   font-family: var(--mono);
-  font-size: 13px;
-  padding: 9px 11px;
+  font-size: 10px;
+  padding: 9px 9px;
   border-radius: 3px;
 }
 input:focus, textarea:focus, select:focus {
@@ -247,7 +247,7 @@ input:focus, textarea:focus, select:focus {
   background: none;
   border: none;
   color: var(--faint);
-  font-size: 16px;
+  font-size: 10px;
   line-height: 1;
   cursor: pointer;
   padding: 2px 5px;
@@ -269,7 +269,7 @@ input:focus, textarea:focus, select:focus {
 }
 .combo-option {
   padding: 7px 11px;
-  font-size: 13px;
+  font-size: 10px;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
