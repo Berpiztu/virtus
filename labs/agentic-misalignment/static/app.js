@@ -38,6 +38,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("judge_provider").addEventListener("change", handleJudgeProviderChange);
   $("repeat_on_error").addEventListener("change", pushRepeatSettings);
   $("repeat_times").addEventListener("change", pushRepeatSettings);
+  $("fail_on_incomplete").addEventListener("change", pushRepeatSettings);
+  $("fail_times").addEventListener("change", pushRepeatSettings);
   $("btn-run").addEventListener("click", run);
   $("btn-stop").addEventListener("click", stop);
   $("btn-download-json").addEventListener("click", downloadResultsJson);
@@ -116,6 +118,10 @@ async function restoreConfigFromStatus(st) {
     $("repeat_on_error").checked = !!cfg.repeat_on_technical_error;
   }
   if (cfg.repeat_times != null) $("repeat_times").value = cfg.repeat_times;
+  if (cfg.fail_on_incomplete_response != null) {
+    $("fail_on_incomplete").checked = !!cfg.fail_on_incomplete_response;
+  }
+  if (cfg.fail_times != null) $("fail_times").value = cfg.fail_times;
 
   if (Array.isArray(cfg.conditions)) {
     $("cond_baseline").checked = cfg.conditions.includes("baseline");
@@ -218,13 +224,17 @@ function renderCategoryFilter() {
 // each repeat decision, so a change lands on the trial that is failing now.
 async function pushRepeatSettings() {
   const times = Math.max(1, Math.min(parseInt($("repeat_times").value, 10) || 1, 20));
+  const failTimes = Math.max(1, Math.min(parseInt($("fail_times").value, 10) || 3, 20));
   $("repeat_times").value = times;
+  $("fail_times").value = failTimes;
   try {
     await fetch("/api/run-settings", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         repeat_on_technical_error: $("repeat_on_error").checked,
         repeat_times: times,
+        fail_on_incomplete_response: $("fail_on_incomplete").checked,
+        fail_times: failTimes,
       }),
     });
   } catch (e) { /* the value still travels with the next /api/run */ }
@@ -729,6 +739,8 @@ function config() {
     // Both stay editable mid-run through /api/run-settings; these are the seeds.
     repeat_on_technical_error: $("repeat_on_error").checked,
     repeat_times: Math.max(1, Math.min(parseInt($("repeat_times").value, 10) || 1, 20)),
+    fail_on_incomplete_response: $("fail_on_incomplete").checked,
+    fail_times: Math.max(1, Math.min(parseInt($("fail_times").value, 10) || 3, 20)),
     max_tokens: maxTokens,
     conditions,
     // The id picks the judge taxonomy and the results folder; the prompts are

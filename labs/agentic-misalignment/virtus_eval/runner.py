@@ -67,6 +67,7 @@ def results_dir_for(scenario_id: str | None) -> str:
 # Tokens reserved from the model's max output budget to leave room for
 # context/system overhead. Subtracted from the reported max_tokens.
 RESERVED_TOKENS = 800
+JUDGE_OUTPUT_TOKEN_CAP = int(os.getenv("JUDGE_OUTPUT_TOKEN_CAP", "1000"))
 
 ANTHROPIC_TRIAL_DELAY_SECONDS = float(os.getenv("ANTHROPIC_TRIAL_DELAY_SECONDS", "0.8"))
 ANTHROPIC_429_COOLDOWN_SECONDS = float(os.getenv("ANTHROPIC_429_COOLDOWN_SECONDS", "10"))
@@ -157,6 +158,29 @@ def _has_actionable_response_content(response_details: dict) -> bool:
     return bool(visible)
 
 
+def _is_incomplete_tool_response(text: str) -> bool:
+    """Return True when the model requested search but never answered the user."""
+    if not re.search(r"<tool:web_search>.*?</tool:web_search>", text, re.DOTALL | re.IGNORECASE):
+        return False
+    visible = re.sub(r"<thinking>.*?</thinking>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+    visible = re.sub(
+        r"<tool:web_search>.*?</tool:web_search>", " ", visible,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    # Providers occasionally append a stray token after the closing tool tag
+    # (observed: "лест"). It is transport residue, not a final user-facing answer.
+    if len(re.findall(r"\w+", visible, flags=re.UNICODE)) < 3:
+        return True
+
+    waiting_for_tool = (
+        r"^\s*wait(?:ing)? for (?:the )?(?:search )?results\b",
+        r"\bthe (?:search )?tool (?:still )?needs? to run\b",
+        r"\b(?:need|needs|should|must) to (?:wait|await) (?:for )?(?:the )?results\b",
+        r"\blet(?:'s| us) see (?:what|if) (?:the )?(?:web )?search returns\b",
+    )
+    return any(re.search(pattern, visible, re.IGNORECASE) for pattern in waiting_for_tool)
+
+
 def _retry_backoff_sleep(attempt: int) -> None:
     """Sleep with exponential backoff + jitter before the next retry.
 
@@ -170,9 +194,11 @@ def _retry_backoff_sleep(attempt: int) -> None:
     time.sleep(delay + random.uniform(0.0, 1.0))
 
 
-def _retry_model_call(fn):
+def _retry_model_call(fn, metrics: dict | None = None):
     last_error = None
     for attempt in range(TECHNICAL_ERROR_RETRIES + 1):
+        if metrics is not None:
+            metrics["attempts"] = attempt + 1
         if model_client.is_cancelled():
             raise model_client._CancelledError()
         try:
@@ -194,9 +220,11 @@ def _retry_model_call(fn):
     raise last_error  # pragma: no cover
 
 
-def _classify_with_retries(response: str, config: dict) -> dict:
+def _classify_with_retries(response: str, config: dict, metrics: dict | None = None) -> dict:
     judge_base_url = config.get("judge_base_url") or config["base_url"]
     for attempt in range(TECHNICAL_ERROR_RETRIES + 1):
+        if metrics is not None:
+            metrics["attempts"] = attempt + 1
         if model_client.is_cancelled():
             raise model_client._CancelledError()
         verdict = classifier.classify(
@@ -213,7 +241,7 @@ def _classify_with_retries(response: str, config: dict) -> dict:
                 cap=(
                     None
                     if model_client.reasoning_shares_output_budget(judge_base_url)
-                    else 4096
+                    else JUDGE_OUTPUT_TOKEN_CAP
                 ),
             ),
         )
@@ -318,6 +346,8 @@ class ExperimentManager:
         self._repeat_settings = {
             "enabled": False,
             "times": TECH_ERROR_REPEAT_TIMES_DEFAULT,
+            "fail_enabled": True,
+            "fail_times": TECH_ERROR_REPEAT_TIMES_DEFAULT,
         }
         self.state = self._idle_state()
 
@@ -352,7 +382,7 @@ class ExperimentManager:
         with self._lock:
             return dict(self._repeat_settings)
 
-    def set_repeat_settings(self, *, enabled=None, times=None) -> dict:
+    def set_repeat_settings(self, *, enabled=None, times=None, fail_enabled=None, fail_times=None) -> dict:
         """Update the technical-error repeat policy, live.
 
         Takes effect on the next repeat decision, so changing it mid-run applies
@@ -363,11 +393,17 @@ class ExperimentManager:
                 self._repeat_settings["enabled"] = bool(enabled)
             if times is not None:
                 self._repeat_settings["times"] = _clamp_repeat_times(times)
+            if fail_enabled is not None:
+                self._repeat_settings["fail_enabled"] = bool(fail_enabled)
+            if fail_times is not None:
+                self._repeat_settings["fail_times"] = _clamp_repeat_times(fail_times)
             settings = dict(self._repeat_settings)
             config = self.state.get("config")
             if isinstance(config, dict):
                 config["repeat_on_technical_error"] = settings["enabled"]
                 config["repeat_times"] = settings["times"]
+                config["fail_on_incomplete_response"] = settings["fail_enabled"]
+                config["fail_times"] = settings["fail_times"]
         return settings
 
     def stop(self):
@@ -390,9 +426,15 @@ class ExperimentManager:
                 "times": _clamp_repeat_times(
                     config.get("repeat_times", TECH_ERROR_REPEAT_TIMES_DEFAULT)
                 ),
+                "fail_enabled": bool(config.get("fail_on_incomplete_response", True)),
+                "fail_times": _clamp_repeat_times(
+                    config.get("fail_times", TECH_ERROR_REPEAT_TIMES_DEFAULT)
+                ),
             }
             config["repeat_on_technical_error"] = self._repeat_settings["enabled"]
             config["repeat_times"] = self._repeat_settings["times"]
+            config["fail_on_incomplete_response"] = self._repeat_settings["fail_enabled"]
+            config["fail_times"] = self._repeat_settings["fail_times"]
             self.state = self._idle_state()
             self.state.update({
                 "status": "running",
@@ -434,6 +476,10 @@ class ExperimentManager:
                             "judge_raw": None,
                             "response_finish_reason": None,
                             "response_reasoning_only": False,
+                            "model_duration_seconds": None,
+                            "model_attempts": 0,
+                            "judge_duration_seconds": None,
+                            "judge_attempts": 0,
                             "category": None,
                             "rationale": None,
                             "method": None,
@@ -462,35 +508,53 @@ class ExperimentManager:
                                     else 8192
                                 ),
                             )
-                            response_details = _retry_model_call(
-                                lambda: model_client.chat_details(
-                                    system_prompt, user_prompt,
-                                    base_url=config["base_url"],
-                                    model=config["model"],
-                                    api_key=_live_api_key(config),
-                                    temperature=config.get("temperature", 1.0),
-                                    max_tokens=test_max_tokens,
+                            model_metrics = {}
+                            model_started = time.monotonic()
+                            try:
+                                response_details = _retry_model_call(
+                                    lambda: model_client.chat_details(
+                                        system_prompt, user_prompt,
+                                        base_url=config["base_url"],
+                                        model=config["model"],
+                                        api_key=_live_api_key(config),
+                                        temperature=config.get("temperature", 1.0),
+                                        max_tokens=test_max_tokens,
+                                    ),
+                                    model_metrics,
                                 )
-                            )
+                            finally:
+                                trial["model_duration_seconds"] = round(time.monotonic() - model_started, 3)
+                                trial["model_attempts"] = model_metrics.get("attempts", 0)
                             response = response_details["text"]
                             trial["response"] = response
                             trial["response_finish_reason"] = response_details.get("finish_reason")
                             trial["response_reasoning_only"] = bool(
                                 response_details.get("reasoning") and not response_details.get("content")
                             )
-                            # Check stop flag before the (potentially slow) judge call.
-                            if self._stop_flag.is_set():
+                            if _is_incomplete_tool_response(response):
                                 trial["category"] = "OTHER"
-                                trial["rationale"] = "Stopped before judge classification."
-                                with self._lock:
-                                    self.state["trials"].append(trial)
-                                    self.state["progress"]["done"] += 1
-                                    self.state["retry_notice"] = None
-                                    self.state["summary"] = self._compute_summary()
-                                self._finish("stopped")
-                                return
-                            verdict = _classify_with_retries(response, config)
-                            trial.update(verdict)
+                                trial["rationale"] = "Model requested a web search but did not answer the user."
+                                trial["method"] = "incomplete-tool-response"
+                            else:
+                                # Check stop flag before the (potentially slow) judge call.
+                                if self._stop_flag.is_set():
+                                    trial["category"] = "OTHER"
+                                    trial["rationale"] = "Stopped before judge classification."
+                                    with self._lock:
+                                        self.state["trials"].append(trial)
+                                        self.state["progress"]["done"] += 1
+                                        self.state["retry_notice"] = None
+                                        self.state["summary"] = self._compute_summary()
+                                    self._finish("stopped")
+                                    return
+                                judge_metrics = {}
+                                judge_started = time.monotonic()
+                                try:
+                                    verdict = _classify_with_retries(response, config, judge_metrics)
+                                finally:
+                                    trial["judge_duration_seconds"] = round(time.monotonic() - judge_started, 3)
+                                    trial["judge_attempts"] = judge_metrics.get("attempts", 0)
+                                trial.update(verdict)
                         except model_client._CancelledError:
                             # User pressed Stop — abort immediately without recording
                             # this partial trial as an error.
@@ -512,7 +576,10 @@ class ExperimentManager:
                         if repeat_max is not None:
                             trial["discarded"] = True
                             trial["repeat_max"] = repeat_max
+                            incomplete = trial.get("method") == "incomplete-tool-response"
                             trial["rationale"] = (
+                                f"Incomplete response — repeating attempt {attempt} of {repeat_max}."
+                                if incomplete else
                                 f"Technical error — repeating attempt {attempt} of {repeat_max}."
                             )
                             with self._lock:
@@ -522,11 +589,12 @@ class ExperimentManager:
                                     "index": i,
                                     "attempt": attempt,
                                     "max": repeat_max,
-                                    "wait_seconds": TECH_ERROR_REPEAT_DELAY_SECONDS,
+                                    "wait_seconds": 0 if incomplete else TECH_ERROR_REPEAT_DELAY_SECONDS,
                                     "error": trial["error"],
                                 }
                             # Interruptible pause so Stop does not wait it out.
-                            if self._stop_flag.wait(max(0.0, TECH_ERROR_REPEAT_DELAY_SECONDS)):
+                            wait_seconds = 0 if incomplete else TECH_ERROR_REPEAT_DELAY_SECONDS
+                            if self._stop_flag.wait(max(0.0, wait_seconds)):
                                 self._finish("stopped")
                                 return
                             continue
@@ -556,12 +624,17 @@ class ExperimentManager:
         allowed to toggle repetition (or raise the count) while the experiment is
         already running, including during the pause between attempts.
         """
-        if trial.get("category") != "TECHNICAL_ERROR" or self._stop_flag.is_set():
+        if self._stop_flag.is_set():
             return None
         settings = self.repeat_settings()
-        if not settings["enabled"] or attempt >= settings["times"]:
+        if trial.get("category") == "TECHNICAL_ERROR":
+            if settings["enabled"] and attempt < settings["times"]:
+                return settings["times"]
             return None
-        return settings["times"]
+        if trial.get("method") == "incomplete-tool-response":
+            if settings["fail_enabled"] and attempt < settings["fail_times"]:
+                return settings["fail_times"]
+        return None
 
     def _finish(self, status: str):
         model_client.set_cancelled(False)

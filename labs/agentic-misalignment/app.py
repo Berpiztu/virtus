@@ -223,6 +223,8 @@ def api_run():
         # while the experiment runs.
         "repeat_on_technical_error": bool(cfg.get("repeat_on_technical_error")),
         "repeat_times": cfg.get("repeat_times"),
+        "fail_on_incomplete_response": bool(cfg.get("fail_on_incomplete_response", True)),
+        "fail_times": cfg.get("fail_times"),
     }
     config["judge_api_key"] = resolve_judge_api_key(cfg, config["api_key"])
     judge_base_url = config["judge_base_url"] or config["base_url"]
@@ -280,14 +282,22 @@ def api_run_settings():
 
     body = request.get_json(silent=True) or {}
     times = body.get("repeat_times")
+    fail_times = body.get("fail_times")
     if times is not None:
         try:
             int(times)
         except (TypeError, ValueError):
             return jsonify({"error": "repeat_times must be a number."}), 400
+    if fail_times is not None:
+        try:
+            int(fail_times)
+        except (TypeError, ValueError):
+            return jsonify({"error": "fail_times must be a number."}), 400
     settings = manager.set_repeat_settings(
         enabled=body.get("repeat_on_technical_error"),
         times=times,
+        fail_enabled=body.get("fail_on_incomplete_response"),
+        fail_times=fail_times,
     )
     return jsonify({"ok": True, **settings})
 
