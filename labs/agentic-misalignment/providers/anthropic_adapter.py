@@ -230,7 +230,7 @@ _OAUTH_ONLY_BETAS = [
 # Without these, Anthropic's infrastructure intermittently 500s OAuth traffic.
 # The version must stay reasonably current — Anthropic rejects OAuth requests
 # when the spoofed user-agent version is too far behind the actual release.
-_CLAUDE_CODE_VERSION_FALLBACK = "2.1.74"
+_CLAUDE_CODE_VERSION_FALLBACK = "2.1.258"
 _claude_code_version_cache: Optional[str] = None
 
 
@@ -250,7 +250,7 @@ def _detect_claude_code_version() -> str:
                 capture_output=True, text=True, timeout=5,
             )
             if result.returncode == 0 and result.stdout.strip():
-                # Output is like "2.1.74 (Claude Code)" or just "2.1.74"
+                # Output is like "2.1.258 (Claude Code)" or just "2.1.258"
                 version = result.stdout.strip().split()[0]
                 if version and version[0].isdigit():
                     return version

@@ -612,7 +612,7 @@ def _provider_headers(api_key: str, *, base_url: str | None = None) -> dict:
                     "claude-code-20250219",
                     "oauth-2025-04-20",
                 ])
-                headers["user-agent"] = "claude-cli/2.1.74 (external, cli)"
+                headers["user-agent"] = "claude-cli/2.1.258 (external, cli)"
                 headers["x-app"] = "cli"
             else:
                 headers["x-api-key"] = api_key
