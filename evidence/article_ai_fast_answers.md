@@ -1,5 +1,7 @@
 # ARTICLE — final, ready to paste into X (fields marked)
 
+> **As published on 2026-07-27.** The league has grown since: fifteen models from eleven labs, negligent recommendations averaging 34% → 8% per model. Current figures: [`model_comparison_benevolent_negligence.md`](model_comparison_benevolent_negligence.md).
+
 ---
 
 ## HEADING

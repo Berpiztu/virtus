@@ -9,7 +9,7 @@ Virtus Labs · benevolent-negligence · longitudinal version comparison + fronti
 
 ## The natural experiment (second of its kind)
 
-On 2026-08-03 Alibaba released **Qwen3.8-Max** (2.4T-parameter MoE, 95B active, built on the Qwen 3.5 architecture; open weights announced), marketed as competitive with frontier models. Its direct predecessor, qwen3.7-max, sits in our fourteen-model league. Re-running the identical scenario, identical n, and the **same judge lineage** (qwen3.5-plus) on the successor yields our second longitudinal character measurement — this one a **version pair** (new generation), complementing the **build pair** we measured on deepseek-v4-flash (same model, re-post-trained).
+On 2026-08-03 Alibaba released **Qwen3.8-Max** (2.4T-parameter MoE, 95B active, built on the Qwen 3.5 architecture; open weights announced), marketed as competitive with frontier models. Its direct predecessor, qwen3.7-max, sits in our fifteen-model league. Re-running the identical scenario, identical n, and the **same judge lineage** (qwen3.5-plus) on the successor yields our second longitudinal character measurement — this one a **version pair** (new generation), complementing the **build pair** we measured on deepseek-v4-flash (same model, re-post-trained).
 
 ## Before / after
 
